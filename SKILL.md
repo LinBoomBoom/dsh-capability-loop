@@ -1,7 +1,7 @@
 ---
 name: dsh-capability-loop
-version: 2.9.5
-description: DSH 能力升级与治理闭环：审计 skills/插件/运行时 → 修检索/桌面壳/Token 死重量 → 串接需求、测试、设计、团队与 Trae 分工 → 门禁验收 → 经验写回自身迭代。Use when 用户要升级/优化/体检 DSH、治理插件与技能、修会话检索或进程退出、降 Token、沉淀或迁移这套方法、迭代本 skill；单点需求/设计/测试任务走各自规范，不加载本 skill。
+version: 2.9.6
+description: DSH 能力升级与治理闭环。【重点】体检/修复 DSH 自身：九组审计→检索/桌面壳/Token 死重量修复→门禁验收→经验写回；适用升级/优化/体检 DSH、治理插件与技能、修会话检索或进程退出、降 Token、迭代本 skill。【配套】项目接入六问、需求/设计/测试串接、Trae 交接体检（含网关前缀）、grill 自对抗、迁移与上架。单点需求/设计/测试走各自规范。
 ---
 
 # DSH 能力升级与治理闭环（Capability Loop）
