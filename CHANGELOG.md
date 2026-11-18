@@ -14,7 +14,7 @@
 
 **修改**
 - `scripts/loop-gate.ps1`：新增可选 `-StateFile`；在「单一类别（design/requirement/test）或 `-Environment`」且「给了 `-StateFile` 或工程有 `.dsh/loop/project.json`」时，调用 `loop-state.ps1 -Action record-check` 写回 `checks.<类别>`。**未标记工程零变化**；退出码语义不变。
-- `scripts/package-skill.ps1`：**修复打包会把 `.tmp` 打进去**的缺陷（此前 1003 条目 → 现 62 条目）。新增排除目录 `.tmp/.git/dist/out/__pycache__/node_modules` 与 `.DS_Store/Thumbs.db`；副作用是「本机路径」扫描不再命中 `.tmp` 里的历史评审记录（本次由 WARN 4 处变 PASS）。
+- `scripts/package-skill.ps1`：**修复打包会把 `.tmp` 打进去**的缺陷（此前 1003 条目 → 现 62 条目）。新增排除目录 `.tmp/.git/.dsh/dist/out/__pycache__/node_modules` 与 `.DS_Store/Thumbs.db`（`.dsh/` 是工程级接管状态，含本机路径，属于工程而非技能）；副作用是「本机路径」扫描不再命中 `.tmp` 里的历史评审记录（本次由 WARN 4 处变 PASS）。
 - `scripts/capability-audit.ps1`：写快照后，若工程已标记，自动 `sync-audit`（同步 metrics）并记 `checks.environment-audit`（PASS/WARN/FAIL + exit）。未标记工程零变化。
 - `SKILL.md`：新增 §1「接管」（三档表 + 一行接入命令 + 状态源 + P0/P1/P2），章节整体后移重编号；§5 快速命令加接管命令；§8 文件地图补 `02-takeover.md` / `loop-state.ps1` / 两个新模板。frontmatter `version` 2.9.6 → 2.10.0；`description` 的【配套】加「项目接管（三档+状态源）」，字符数 188 → **199**（仍 ≤200 的「不偏贵」线，catalog 增加约 11 字符）。
 - `version.json`：版本、references/templates/scripts 清单、breaking_changes 同步。

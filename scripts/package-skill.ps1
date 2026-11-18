@@ -104,8 +104,9 @@ $userPathPatterns = @(
     '[A-Za-z]:\\Documents and Settings\\[^\\\s"'']+\\'
 )
 $fileList = @(Get-ChildItem -LiteralPath $SkillRoot -Recurse -File -ErrorAction SilentlyContinue)
-# 打包排除：临时/构建/缓存/版本库目录不属于技能本体（v2.10.0 修复：此前 .tmp 会被打进包，1003 条目）。
-$excludeDirs = @('.tmp', '.git', 'dist', 'out', '__pycache__', 'node_modules')
+# 打包排除：临时/构建/缓存/版本库/工程级状态不属于技能本体（v2.10.0 修复：此前 .tmp 会被打进包，1003 条目）。
+# .dsh/ 是「接入本工程」的接管状态（含本机路径），属于工程而非技能，必须排除。
+$excludeDirs = @('.tmp', '.git', '.dsh', 'dist', 'out', '__pycache__', 'node_modules')
 $excludeFiles = @('.DS_Store', 'Thumbs.db')
 $fileList = @($fileList | Where-Object {
     $rel = $_.FullName.Substring($SkillRoot.Length).TrimStart('\')
