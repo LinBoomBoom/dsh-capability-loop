@@ -2,6 +2,38 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.10.0 — 2026-11-18（接管协议：让闭环自动生效，而不是等模型想起）
+
+**起因**：用户实测反馈「装了 skill 但真实项目里不接管」——没有 INTAKE、没有门禁、没有证据收口，必须手动 `/dsh-capability-loop` 才动。根因不是 description 写得不够好，而是缺**确定性的触发、会话内的状态、用户可证的可视性**三层机制：skill 正文只有在模型主动调 `skill` 或用户打 `/name` 时才注入（catalog 只有摘要）；七阶段没有状态载体，跨会话不保留；门禁输出只在终端滚过。
+
+**新增**
+- `references/02-takeover.md`：接管协议——三档（`off` / `shadow` 影子 / `on` 接管）八维对照、状态源 schema、`<system-reminder>` 注入逐字稿（on ≈1,450 字符 ≈350–400 token；shadow ≈90 字符）、注入纪律（首步一次 / digest 增量 / fail-open / 不写 system prompt / 不新增 Session event 类型）、P0（AGENTS 片段软接管，今天可用）→ P1（宿主插件 `agent/pre-step` 折入契约，硬接管）→ P2（Web 面板）路线、正反例回归基线、已知限制。
+- `scripts/loop-state.ps1`：接管状态源唯一写入方。`init`（生成 `.dsh/loop/project.json` + `state.json` + `.gitignore`，默认 `shadow`）/ `status`（只读，未接入 exit 3，支持 `-Json`）/ `set-mode` / `set-stage` / `set-next` / `record-check` / `add-blocker`（自动 D-ID）/ `resolve-blocker` / `sync-audit`。写 `digest`（mode+stage+checks+blockers 指纹）供 P1 判断增量注入。
+- `templates/agents-loop-fragment.md`：AGENTS.md 12 行接管片段（标记行 `<!-- dsh-capability-loop:on -->` + 先读 state + 适用/豁免 + 证据 + 门禁 + 自审不顶门 + 写回），含「为什么是这几行」与「不要把整包贴进去」。
+- `templates/loop-project.json`：接管声明模板。
+
+**修改**
+- `scripts/loop-gate.ps1`：新增可选 `-StateFile`；在「单一类别（design/requirement/test）或 `-Environment`」且「给了 `-StateFile` 或工程有 `.dsh/loop/project.json`」时，调用 `loop-state.ps1 -Action record-check` 写回 `checks.<类别>`。**未标记工程零变化**；退出码语义不变。
+- `scripts/package-skill.ps1`：**修复打包会把 `.tmp` 打进去**的缺陷（此前 1003 条目 → 现 62 条目）。新增排除目录 `.tmp/.git/dist/out/__pycache__/node_modules` 与 `.DS_Store/Thumbs.db`；副作用是「本机路径」扫描不再命中 `.tmp` 里的历史评审记录（本次由 WARN 4 处变 PASS）。
+- `scripts/capability-audit.ps1`：写快照后，若工程已标记，自动 `sync-audit`（同步 metrics）并记 `checks.environment-audit`（PASS/WARN/FAIL + exit）。未标记工程零变化。
+- `SKILL.md`：新增 §1「接管」（三档表 + 一行接入命令 + 状态源 + P0/P1/P2），章节整体后移重编号；§5 快速命令加接管命令；§8 文件地图补 `02-takeover.md` / `loop-state.ps1` / 两个新模板。frontmatter `version` 2.9.6 → 2.10.0；`description` 的【配套】加「项目接管（三档+状态源）」，字符数 188 → **199**（仍 ≤200 的「不偏贵」线，catalog 增加约 11 字符）。
+- `version.json`：版本、references/templates/scripts 清单、breaking_changes 同步。
+
+**验证（本轮实测，PowerShell 5.1）**
+- 8 个 `.ps1` 全部 Parser 0 错误 + UTF-8 BOM（编辑后逐个人工补 BOM）。
+- `loop-state.ps1`：`init`（临时目录）→ `state.json`/`project.json`/`.gitignore` 三件生成；`status` 未接入 exit 3；`record-check`/`set-stage`/`add-blocker`×2（自动 D-01/D-02）/`resolve-blocker`/`set-mode on`/`sync-audit` 全部 PASS，`project.json.mode` 与 `state.mode` 同步。
+- `loop-gate.ps1` 状态写回：正例（有 design-context+grill）→ PASS + `checks.design=PASS`；反例（缺 design-context）→ exit 1 + `checks.design=FAIL`；**未标记工程不创建 `.dsh/`**（实测 state exists=False）；标记工程自动写回（不传 `-StateFile`）。
+- `next.label` 不被 FAIL 覆盖：先 `set-next` 再有 FAIL，`status` 仍显示用户设定的下一步。
+- `capability-audit.ps1` 在标记工程上自动 `sync-audit` + 记 `environment-audit`（PASS=19 WARN=10 FAIL=2 SKIP=1 的临时目录样本）。
+
+**未实测**
+- P1 宿主插件注入（`agent/pre-step` 折入契约、resume/fork 去重、`shadowSessions` 计数）——设计稿 `docs/design/2026-11-18-capability-loop-panel.md` 已给逐字稿与验收判据，尚未实现。
+- P2 面板（`sidebar.panellist` + `main`、7 Tab、运行中心）——只有设计稿与 mockup，无真实插件渲染。
+- `loop-gate -Kind all` 不写回（设计如此，未跑 all 场景验证）。
+- 设计自审的 P2 打磨项（当前阶段强调色、记忆返工趋势、活动条数）未做。
+
+**回滚**：`git revert` 本提交即可（新增文件全部为新增，`loop-gate`/`capability-audit` 的新增逻辑均在 try/catch 内且默认不触发——未标记工程行为完全不变）；旧工程若已生成 `.dsh/loop/`，删除该目录即恢复到未接管。
+
 ## v2.9.6 — 2026-11-15（SKILL 描述改主次结构：重点功能 / 配套功能）
 
 **起因**：v2.9.5 的 frontmatter `description` 是一条平铺的能力链（审计→修复→串接→门禁→写回）加一串触发词，主次不分——核心（体检/修复 DSH 自身）与配套（项目接入、需求/设计/测试、交接、grill、迁移/上架）混在同一句，技能市场里也不容易看出「这个 skill 到底主打什么」。

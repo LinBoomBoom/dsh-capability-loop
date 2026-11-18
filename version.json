@@ -1,7 +1,7 @@
 {
   "name": "dsh-capability-loop",
-  "version": "2.9.6",
-  "released": "2026-11-15",
+  "version": "2.10.0",
+  "released": "2026-11-18",
   "lineage": [
     "session-0d908c48-92d7-432e-9303-966161df7a81",
     "session-3ef140c9-2ed3-4857-a7ad-9374b9107949",
@@ -31,6 +31,7 @@
     "python": ">=3.11（scripts/module-preflight.py 交接预检需要；文档总览工具另需 markdown，可选）"
   },
   "scripts": {
+    "loop-state.ps1": "接管状态源（唯一写入方）：init/status/set-mode/set-stage/set-next/record-check/add-blocker/resolve-blocker/sync-audit；status 未接入 exit 3；支持 -Json",
     "capability-audit.ps1": "九组只读体检 + 与上次漂移对比 + 版本/更新检查；-Strict 时有 FAIL 返回 1",
     "loop-gate.ps1": "聚合门禁：design（含 design-context 硬门）/requirement/test + -Environment；-RequireGrill 使 grill 缺失变 FAIL",
     "product-context.ps1": "扫描工程产出产品/设计上下文线索（框架/组件库/主题/规模）",
@@ -47,6 +48,7 @@
     "trae-cdp.mjs": "feature-handoff/scripts/trae-cdp.mjs：CDP 驱动（--remote-debugging-port=9333；见 references/60-handoff.md）"
   },
   "references": [
+    "02-takeover.md",
     "05-intake.md",
     "00-baseline.md",
     "10-audit.md",
@@ -64,6 +66,8 @@
     "95-store-publish.md"
   ],
   "templates": [
+    "agents-loop-fragment.md",
+    "loop-project.json",
     "project-profile.md",
     "intake-questions.md",
     "design-context.md",
@@ -92,7 +96,9 @@
     "v2.9.3：F 组反向指令判定改为**分句**（去 `**`/反引号装饰后按 ，、。；切分；「不得漏写」视为正向，「不写 host」「不含 /api」「不是同一前缀」不误报），修掉 v2.9.2 漏检事故原文（`**不要**写 /api 或 /png 前缀`）的回归；前缀集合补取 proxy/vite-config 里声明的前缀；路径分句符补 ，、。无破坏性变更",
     "v2.9.4：F 组修两处边界（①真实工程 `/api/...` 事故形态不再被放行——前缀集合排除 test/mock 与 `api` 段，proxy 来源取消；②括号/顿号写法：不含 `/png` 的括号剥离、含 `/png` 的保留内容，不按 `、` 切分；`不需要写` 纳入否定词）",
     "v2.9.5：F 组反向指令改**位置序**（否定词须在「/png…前缀」之前；只按 。；切句），同时满足「不要写 /api、/png 前缀」要 FAIL 与「必写、host 不写」不误报；全 weak 工程不再静默 F-skip（改出 F-prefix-weak WARN / 缺陷路径仍 FAIL）；测试文件排除改为精确后缀 + 目录（不再用子串，避免 special.ts 被误排）",
-    "v2.9.6：无破坏性变更；SKILL.md frontmatter description 改为主次结构（【重点】体检/修复 DSH 自身 →【配套】项目接入/规范串接/交接/grill/迁移上架），触发词集合与触发边界不变，字符数 195→188（catalog 成本不增长）"
+    "v2.9.6：无破坏性变更；SKILL.md frontmatter description 改为主次结构（【重点】体检/修复 DSH 自身 →【配套】项目接入/规范串接/交接/grill/迁移上架），触发词集合与触发边界不变，字符数 195→188（catalog 成本不增长）",
+    "v2.10.0：新增接管协议（references/02-takeover.md + templates/agents-loop-fragment.md + templates/loop-project.json）+ scripts/loop-state.ps1（状态唯一写入）+ loop-gate/capability-audit 状态写回。无破坏性变更：loop-gate 新增可选 -StateFile，未标记工程零变化；退出码语义不变",
+    "v2.10.0：新增接管协议（references/02-takeover.md + templates/agents-loop-fragment.md + templates/loop-project.json）+ scripts/loop-state.ps1（状态唯一写入）+ loop-gate/capability-audit 状态写回。无破坏性变更：loop-gate 新增可选 -StateFile，未标记工程零变化；退出码语义不变；SKILL.md description 微调（【配套】加「项目接管」）"
   ],
   "health_targets": {
     "catalog_chars": "不增长（源环境约 3673 字符）",

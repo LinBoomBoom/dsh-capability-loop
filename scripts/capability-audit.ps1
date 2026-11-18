@@ -449,6 +449,24 @@ if ($OutFile) {
     }
 }
 
+# ---------------- 状态源同步（P0，仅当工程已接入） ----------------
+try {
+    $loopMarker = Join-Path (Join-Path (Join-Path $Workspace '.dsh') 'loop') 'project.json'
+    if (Test-Path -LiteralPath $loopMarker) {
+        $stateScript = Join-Path $PSScriptRoot 'loop-state.ps1'
+        if (Test-Path -LiteralPath $stateScript) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stateScript -Action sync-audit -Root $Workspace | Out-Host
+            $auditStatus = 'PASS'
+            $auditExit = 0
+            if ($fail -gt 0) { $auditStatus = 'FAIL'; $auditExit = 1 }
+            elseif ($warn -gt 0) { $auditStatus = 'WARN'; $auditExit = 3 }
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stateScript -Action record-check -Root $Workspace -Check environment-audit -Status $auditStatus -ExitCode $auditExit -Cmd 'capability-audit.ps1' | Out-Host
+        }
+    }
+} catch {
+    Write-Host ('[WARN] 状态源同步失败：' + $_.Exception.Message) -ForegroundColor Yellow
+}
+
 if ($Json) {
     $summary = New-Object psobject
     $summary | Add-Member -MemberType NoteProperty -Name pass -Value $pass

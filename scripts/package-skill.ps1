@@ -104,6 +104,18 @@ $userPathPatterns = @(
     '[A-Za-z]:\\Documents and Settings\\[^\\\s"'']+\\'
 )
 $fileList = @(Get-ChildItem -LiteralPath $SkillRoot -Recurse -File -ErrorAction SilentlyContinue)
+# 打包排除：临时/构建/缓存/版本库目录不属于技能本体（v2.10.0 修复：此前 .tmp 会被打进包，1003 条目）。
+$excludeDirs = @('.tmp', '.git', 'dist', 'out', '__pycache__', 'node_modules')
+$excludeFiles = @('.DS_Store', 'Thumbs.db')
+$fileList = @($fileList | Where-Object {
+    $rel = $_.FullName.Substring($SkillRoot.Length).TrimStart('\')
+    $parts = $rel -split '\\'
+    $skip = $false
+    foreach ($p in $parts) { if ($excludeDirs -contains $p) { $skip = $true; break } }
+    if ($skip) { return $false }
+    if ($excludeFiles -contains $_.Name) { return $false }
+    return $true
+})
 $hits = @()
 foreach ($f in $fileList) {
     if ($f.Extension -in @('.md', '.json', '.ps1', '.txt')) {
