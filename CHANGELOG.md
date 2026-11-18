@@ -2,6 +2,45 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.11.0 — 2026-11-18（P1 宿主接管插件：契约自动进首步，不再等模型自觉）
+
+**起因**：v2.10.0 的 P0 是软接管——`AGENTS.md` 链一定注入，但「读 `state.json`」仍靠模型自觉，实测里模型会跳过那次 `read`。要确定性，必须由宿主在首步把契约折进消息。
+
+**新增 `plugins/capability-loop/`（host bundle，不装则行为与 v2.10.0 完全一致）**
+- `index.js`：`agent/pre-step` 瀑布钩子，先 `await next()`，再按档位决定是否把契约折进 `decision.messages`（**紧跟本步认领的用户消息之后**，用户原话先出现）。
+  - `on`：完整契约 ≤1600 字符（实测约 810），含阶段/本阶段出口/当前门禁/阻断/下一步/状态源路径；
+  - `shadow`：一行 ≤140 字符提示，只记录不阻断；并追加 `.dsh/loop/shadow-log.jsonl`（每会话一行）；
+  - `off` / 未标记工程：0 注入、0 读写。
+- 档位优先级：`project.json.mode` → 被 `state.json.mode` 覆盖 → 缺省 `defaultMode`（`off`）。**安装插件 ≠ 接管所有项目**。
+- 纪律：**fail-open**（读/解析/构造任一失败只记日志、不注入）；**幂等**（消息带 `source.kind='capability-loop'` + 内容指纹，同批/会话历史/resume/fork 都判重）；**只读 `state.json`**（唯一写入方仍是脚本）；**不新增 Session 事件类型**（只用普通 `user/message`，会话可正常重开）。
+- `cordis.patch.yml`：`insert` 行 + 六个可配键（`defaultMode` / `maxContractChars` / `maxShadowChars` / `shadowLog` / `debug` / `skillDir`）。
+- `README.md`（含契约样张、安装、配置、已验证/未验证）、`icon.svg`、`package.json`（`dsh.bundle.patch` + `test` 脚本）。
+- `test/takeover.test.mjs`：**10 条夹具**，自带沙箱（临时目录 + `@deepseek-ai/dsh-llm` 桩，等价真实解析路径），`node --test` 全绿。覆盖：未标记零注入 / off 不注入 / shadow 一行+日志+同会话只记一次 / on 契约内容与长度 / 注入位置 / resume 去重 / 同批去重 / fs 抛错 fail-open / state 坏 JSON 降级 / `defaultMode=on` 但未标记仍不注入。
+
+**修改**
+- `scripts/loop-state.ps1`：新增 `-Action sync-shadow`（读影子日志 → `shadowSessions` + `shadow{sessions,target,canUpgrade,at}`；不覆盖已有 `next.label`）与 `-ShadowTarget`（默认 3）；`status` 增加「影子：已观察 N/M 个会话 —— 可升级」一行。
+- `scripts/loop-state.ps1`（补）：`init` 生成的 `.dsh/loop/.gitignore` 追加 `shadow-log.jsonl`；默认 `-SkillVersion` 跟到 2.11.0。
+- 插件影子提示超预算时**丢「下一步」尾句并保句号收尾**，不再截成半句（夹具加了两条断言）。
+- `references/02-takeover.md`：P1 从「未实现」改为「已实现 + 夹具验证」，补 §2.1（入口/钩子/档位/注入/去重/影子计数/安装/夹具）、`sync-shadow` 命令与回归行；已知限制改写为真实未实测项。
+- `SKILL.md`：§1 的 P1 描述更新；§8 文件地图补 `plugins/capability-loop/`；`version` 2.11.0。
+- `version.json`：新增 `bundle` 块（dir/name/kind/entry/hook/install/test/verified/unverified），breaking_changes 补 v2.11.0。
+
+**验证（本轮实测）**
+- 夹具：`node --test plugins/capability-loop/test/takeover.test.mjs` → **10/10 pass**。
+- `node --check index.js` → 0 错误；`package.json` / `cordis.patch.yml` 可解析。
+- 契约样张实测：813 字符、注入位置索引 1（用户消息 0）、`digest=cl2ff7ab3d-330`。
+- `sync-shadow`：无日志 → exit 1 + 提示；3 条不同会话（含 1 条重复）→ `shadowSessions=3`、`canUpgrade=true`、`status` 打印升级提示。
+- 9 个 `.ps1` 解析 0 错误 + BOM 完好；`package-skill.ps1` 打包 WARN=0。
+
+**未实测**
+- **真实 Cordis 加载**：`install_bundle` 后该行是否按预期激活（本轮只做夹具，未改用户 profile）。
+- 自定义 `source.kind='capability-loop'` 在 Web UI 的渲染表现（可能显示为普通用户消息；`MessageSourceMap` 文档称消费者对未知 kind 降级）。
+- 真实会话的 token 计费差异；多工作区切换时的读取时序。
+- `shadow-log.jsonl` 每会话读全量再重写的成本（日志是每会话一行，预期很小，未做长跑压测）。
+- **影子日志已写进本仓库 dogfood**（`.dsh/loop/shadow-log.jsonl`，已被 `.gitignore` 忽略），`sync-shadow` 实测计数 1/3。
+
+**回滚**：`git revert` 本提交；或仅卸载插件（`plugin_manager action=remove_bundle target=dsh-capability-loop-bundle`）——skill 侧行为不受影响。`v2.10.0` 的 P0 路径仍完整可用。
+
 ## v2.10.0 — 2026-11-18（接管协议：让闭环自动生效，而不是等模型想起）
 
 **起因**：用户实测反馈「装了 skill 但真实项目里不接管」——没有 INTAKE、没有门禁、没有证据收口，必须手动 `/dsh-capability-loop` 才动。根因不是 description 写得不够好，而是缺**确定性的触发、会话内的状态、用户可证的可视性**三层机制：skill 正文只有在模型主动调 `skill` 或用户打 `/name` 时才注入（catalog 只有摘要）；七阶段没有状态载体，跨会话不保留；门禁输出只在终端滚过。

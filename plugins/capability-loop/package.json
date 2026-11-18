@@ -1,0 +1,27 @@
+{
+  "name": "dsh-capability-loop-bundle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capability-loop takeover for DeepSeek Harness: injects a short governance contract on the first step of a marked project, honoring off / shadow / on modes from .dsh/loop/state.json.",
+  "icon": "icon.svg",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/takeover.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.2-rc.3"
+  },
+  "license": "MIT"
+}

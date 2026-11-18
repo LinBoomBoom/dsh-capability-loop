@@ -9,11 +9,11 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\loop-state.ps1 -Action record-check -Root <工程根> -Check design -Status FAIL -ExitCode 1 -Cmd "loop-gate -Kind design"
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\loop-state.ps1 -Action add-blocker -Root <工程根> -BlockerText "..." -Owner lead -Due 2026-11-19
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\loop-state.ps1 -Action resolve-blocker -Root <工程根> -BlockerId D-01
-#   powershell -NoProfile -ExecutionPolicy Bypass -File .\loop-state.ps1 -Action sync-audit -Root <工程根>
+#   powershell -NoProfile -ExecutionPolicy Bypass -File .\loop-state.ps1 -Action sync-audit -Root <工程根>`r`n#   powershell -NoProfile -ExecutionPolicy Bypass -File .\loop-state.ps1 -Action sync-shadow -Root <工程根> [-ShadowTarget 3]
 # 退出码：0 = 成功；1 = 运行错误；2 = 参数错误；3 = 未找到（status 时 state 不存在）
 [CmdletBinding()]
 param(
-    [ValidateSet('init', 'status', 'set-mode', 'set-stage', 'set-next', 'record-check', 'add-blocker', 'resolve-blocker', 'sync-audit')]
+    [ValidateSet('init', 'status', 'set-mode', 'set-stage', 'set-next', 'record-check', 'add-blocker', 'resolve-blocker', 'sync-audit', 'sync-shadow')]
     [string]$Action = 'status',
     [string]$StateFile = '',
     [string]$Root = '',
@@ -31,7 +31,8 @@ param(
     [string]$BlockerText = '',
     [string]$Owner = '',
     [string]$Due = '',
-    [string]$SkillVersion = '2.10.0',
+    [int]$ShadowTarget = 3,
+    [string]$SkillVersion = '2.11.0',
     [switch]$Force,
     [switch]$Json
 )
@@ -201,6 +202,13 @@ if ($Action -eq 'status') {
     Write-Host ('工程   ：' + [string]$existingState.project.name)
     Write-Host ('根目录 ：' + [string]$existingState.project.root)
     Write-Host ('档位   ：' + [string]$existingState.mode + '（阶段 ' + [string]$existingState.stage + '）')
+    if ($null -ne $existingState.PSObject.Properties['shadow'] -and $null -ne $existingState.shadow) {
+        $sh = $existingState.shadow
+        $line = '影子   ：已观察 ' + [string]$sh.sessions + ' / ' + [string]$sh.target + ' 个会话'
+        if ($sh.canUpgrade -eq $true) { $line = $line + ' —— 可升级：-Action set-mode -Mode on' }
+        else { $line = $line + '（继续观察）' }
+        Write-Host $line
+    }
     Write-Host ('下一项 ：' + [string]$existingState.next.label)
     if (@($existingState.checks.PSObject.Properties).Count -gt 0) {
         Write-Host '门禁   ：'
@@ -240,7 +248,7 @@ if ($Action -eq 'init') {
     Save-State -State $state -Path $StateFile
     $gitignore = Join-Path $loopPath '.gitignore'
     if (-not (Test-Path -LiteralPath $gitignore)) {
-        [System.IO.File]::WriteAllText($gitignore, "state.json`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText($gitignore, "state.json`r`nshadow-log.jsonl`r`n", (New-Object System.Text.UTF8Encoding($false)))
     }
     Write-Host ('[PASS] 已初始化：' + $StateFile) -ForegroundColor Green
     Write-Host ('       档位 ' + $initialMode + '；阶段 INTAKE；下一步：接入六问')
@@ -392,6 +400,42 @@ switch ($Action) {
         if ($null -ne $audit.PSObject.Properties['disabledSkills']) { $state.metrics | Add-Member -MemberType NoteProperty -Name disabledSkills -Value ([int]$audit.disabledSkills) -Force }
         if ($null -ne $audit.PSObject.Properties['indexMB'] -and [string]$audit.indexMB -ne '') { $state.metrics | Add-Member -MemberType NoteProperty -Name indexMB -Value ([double]$audit.indexMB) -Force }
         if ($null -ne $audit.PSObject.Properties['sessions']) { $state.metrics | Add-Member -MemberType NoteProperty -Name sessions -Value ([int]$audit.sessions) -Force }
+    }
+    'sync-shadow' {
+        # 读插件写的影子观察日志（每会话一行），更新 shadowSessions；达到目标提示升级。
+        $logPath = Join-Path (Join-Path (Join-Path $RootPath '.dsh') 'loop') 'shadow-log.jsonl'
+        if (-not (Test-Path -LiteralPath $logPath)) {
+            Write-Host ('[WARN] 未找到影子观察日志：' + $logPath + '（影子档下宿主插件会写；未装插件则无此文件）') -ForegroundColor Yellow
+            exit 1
+        }
+        $logText = ''
+        try {
+            $logText = [System.IO.File]::ReadAllText($logPath, (New-Object System.Text.UTF8Encoding($false)))
+        } catch {
+            Write-Host ('[FAIL] 读取影子日志失败：' + $_.Exception.Message) -ForegroundColor Red
+            exit 1
+        }
+        $seen = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($line in ($logText -split "`r?`n")) {
+            $trimmed = $line.Trim()
+            if ($trimmed -eq '') { continue }
+            $obj = $null
+            try { $obj = $trimmed | ConvertFrom-Json } catch { $obj = $null }
+            if ($null -eq $obj) { continue }
+            if ($null -ne $obj.PSObject.Properties['session'] -and [string]$obj.session -ne '') {
+                [void]$seen.Add([string]$obj.session)
+            }
+        }
+        $count = $seen.Count
+        $state.shadowSessions = $count
+        $canUpgrade = ($count -ge $ShadowTarget)
+        $shadowInfo = New-Object psobject
+        $shadowInfo | Add-Member -MemberType NoteProperty -Name sessions -Value $count
+        $shadowInfo | Add-Member -MemberType NoteProperty -Name target -Value $ShadowTarget
+        $shadowInfo | Add-Member -MemberType NoteProperty -Name canUpgrade -Value $canUpgrade
+        $shadowInfo | Add-Member -MemberType NoteProperty -Name at -Value (Now-Iso)
+        if ($null -ne $state.PSObject.Properties['shadow']) { $state.shadow = $shadowInfo }
+        else { $state | Add-Member -MemberType NoteProperty -Name shadow -Value $shadowInfo }
     }
     default {
         Write-Host ('[FAIL] 未知 Action：' + $Action) -ForegroundColor Red

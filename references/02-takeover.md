@@ -21,10 +21,39 @@
 | 层 | 做法 | 确定性 | 成本 | 何时用 |
 |---|---|---|---|---|
 | **P0 软接管**（本文件 + 模板） | `AGENTS.md` 12 行片段 + `.dsh/loop/state.json` | 中：`AGENTS.md` 链**一定注入**，但「读 state」靠模型照做 | 0 安装 | 今天就能用 |
-| **P1 硬接管**（宿主插件，未实现） | 插件在 `agent/pre-step` 把契约折进该步消息 | 高：首步必带，不依赖模型自觉 | 需要 bundle | 装了插件之后 |
+| **P1 硬接管（已实现，夹具验证）** | 宿主插件 `plugins/capability-loop/`：在 `agent/pre-step` 把契约折进该步消息 | 高：首步必带，不依赖模型自觉 | 需装 bundle | 装了插件之后 |
 | **P2 面板**（未实现） | `sidebar.panellist` + `main` 全局页 | 高：状态可见可控 | 需要客户端半 | 想让人看见时 |
 
-P1 的机制依据：`@deepseek-ai/dsh-agent-instructions` 就是用 `agent/pre-step` 在首个请求前注入 `AGENTS.md` 链（源码 `src/index.ts` L330–356）；插件照同样方式把契约插进 `decision.messages`，不用 `agent.inject()`（后者要等唤醒）。
+P1 的机制依据：`@deepseek-ai/dsh-agent-instructions` 就是用 `agent/pre-step` 在首个请求前注入 `AGENTS.md` 链（源码 `src/index.ts` L330–356）；插件照同样方式把契约插进 `decision.messages`，不用 `agent.inject()`（后者要等唤醒，且可能错过已认领批次的 pre-step）。
+
+### 2.1 P1 插件（`plugins/capability-loop/`）
+
+| 项 | 内容 |
+|---|---|
+| 入口 | `index.js`（host half，ESM）；`inject = ['fs', 'workingDirectory']` |
+| 钩子 | `agent/pre-step` 瀑布：先 `await next()`，再决定是否折入消息 |
+| 档位 | `.dsh/loop/project.json` 的 `mode` → 被 `state.json` 的 `mode` 覆盖 → 缺省用插件 `defaultMode`（默认 `off`） |
+| 注入 | `on`：完整契约 ≤1600 字符（实测约 810）；`shadow`：一行 ≤140 字符；`off`/未标记：0 |
+| 位置 | 紧跟本步认领的用户消息之后（用户原话先出现，契约随后） |
+| 去重 | 消息带 `source.kind='capability-loop'` + 内容指纹；同批、会话历史、resume/fork 都判重 |
+| 影子计数 | 追加 `.dsh/loop/shadow-log.jsonl`（每会话一行）→ `loop-state.ps1 -Action sync-shadow` 计数并提示升级 |
+| 纪律 | fail-open（任一失败只记日志、不注入）；只读 `state.json`；不新增 Session 事件类型 |
+
+**安装**（本机目录，开发/内测）：
+
+```
+plugin_manager  action=install_bundle  target="<skill>\plugins\capability-loop"
+```
+
+装完在 **Plugins** 页打开该行，然后在**新会话**验证：`on` 档首条消息后应出现契约，`shadow` 档是一行提示。
+
+**回归夹具**（10 条，`node --test`）：
+
+```powershell
+node --test "<skill>\plugins\capability-loop\test\takeover.test.mjs"
+```
+
+覆盖：未标记零注入 / off 不注入 / shadow 一行 + 影子日志 + 同会话只记一次 / on 契约含阶段·门禁·阻断·下一步且 ≤1600 / 注入紧跟用户消息 / resume 历史去重 / 同批去重 / fs 抛错 fail-open / state 坏 JSON 降级 / `defaultMode=on` 但未标记仍不注入。
 
 ## 3. 档位：off / shadow / on
 
@@ -124,6 +153,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $st -Action resolve-blocker 
 # 门禁自动写回（工程有 .dsh/loop/project.json 时 loop-gate 自动调用；也可显式）
 powershell -NoProfile -ExecutionPolicy Bypass -File "$sk\scripts\loop-gate.ps1" -Workspace "<工程根>" -TaskDir docs/design -Kind design [-StateFile "<state.json>"]
 powershell -NoProfile -ExecutionPolicy Bypass -File "$sk\scripts\capability-audit.ps1" -Workspace "<工程根>"
+
+# 影子观察计数（装 P1 插件后：读 shadow-log.jsonl → shadowSessions + 升级提示）
+powershell -NoProfile -ExecutionPolicy Bypass -File $st -Action sync-shadow -Root "<工程根>" [-ShadowTarget 3]
 ```
 
 **写回规则**：`loop-gate.ps1` 只在「单一类别（design/requirement/test）或 `-Environment`」且「给了 `-StateFile` 或工程有 `.dsh/loop/project.json`」时写 `checks.<类别>`；`capability-audit.ps1` 先写 `.tmp/capability-loop/audit-state.json`，再同步 `metrics` 并记 `checks.environment-audit`。**未标记工程零变化**。
@@ -137,6 +169,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$sk\scripts\capability-audi
 | 标记工程跑 `-Kind design`（缺 design-context） | FAIL（exit 1）；`checks.design.status=FAIL`；不改写已有 `next.label` |
 | `-Kind all` | **不写回**（避免把整体结果误记到某一类） |
 | `set-mode` | `project.json.mode` 与 `state.mode` 同步 |
+| `sync-shadow`（无日志） | exit 1 + 提示「未装插件则无此文件」 |
+| `sync-shadow`（3 会话） | `shadowSessions=3`；`shadow.canUpgrade=true`；`status` 打印「可升级：-Action set-mode -Mode on」 |
 | JSON 坏 | `status` 报错但其它命令可修复（`init -Force`） |
 | 未接入跑 `status` | exit 3 + 提示，不创建文件 |
 
@@ -145,4 +179,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$sk\scripts\capability-audi
 - P0 的「读 state」是**软**的：模型可能跳过那次 `read`；P1 插件才是确定性的。
 - `shadowSessions` 计数只有 P1 插件能可靠递增；P0 阶段可手工 `set-mode` 升级。
 - 面板读状态需要**当前会话**授权（`workspaceFiles.read(sessionId, …)`）；第三方 bundle 不能给 `dsh-api-remotes` 加命名空间。
-- 未实测：P1 注入与 resume 去重、面板注册与运行中心（见设计稿 §8）。
+- **P1 已实现并夹具验证**（10/10）；**未实测**：真实 Cordis 加载（`install_bundle` 后是否按预期激活）、自定义 `source.kind` 在 Web UI 的渲染表现、真实 token 计费差异、多工作区切换时的读取时序。
+- 未实测：P2 面板注册与运行中心（见设计稿 §8）。
