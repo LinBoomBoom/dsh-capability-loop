@@ -2,6 +2,40 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.12.0 — 2026-11-19（P2 面板 v1：侧边栏「能力闭环」入口）
+
+**起因**：用户装完 P1 后在桌面版找不到入口。P1 只做了 **host 半**（注入），按设计 P2 才有 UI——但那意味着「装了却看不见」。本版补上 client 半，给出可用的面板 v1。
+
+**新增 `plugins/capability-loop/client.js`（client half）**
+- 注册两个 slot：`sidebar.panellist`（id `capability-loop`、`order: 20`、label「能力闭环」、环形箭头图标）与 `main`（同名 key = 面板本体）。
+- 面板内容（**只读**）：档位徽标（接管/影子/关闭 + 影子观察进度）、当前阶段 + 7 段轨道、门禁列表（状态徽标 / exit / 时间）、阻断清单、下一步 + 命令、状态源路径。
+- 三态：加载中 / 未接入（给接入命令）/ 有工程；多工程时给下拉切换。
+- **数据通道**：`GET /api/file?path=<绝对路径>`（已认证 `connection.fetch` + `browserPeer`），先读 `~/.dsh/storages/workspace.json` 找已登记工作区，再逐个试 `<ws>/.dsh/loop/project.json` → `state.json`。**不需要会话**，纯读。
+- ctx 由 `apply(ctx)` 闭包注入（不猜 slot props 形状），`fail-open`：读不到就显示未接入，不崩。
+
+**新增**
+- `plugins/capability-loop/test/client.test.mjs`（7 条）：注册契约（key/id/order/label/icon）、空态、有工程渲染（档位/阶段/门禁计数/阻断/下一步）、shadow 观察进度、home 未知、fetch 抛错不崩。自带极简 React 桩（hooks + 重渲染）。
+- `plugins/capability-loop/locale/{en,zh}.json`（Plugins 页标题/描述/详情）、`docs/DETAIL.md`；`package.json` 加 `./client` 导出、`dsh.client`（`platform: web`、`immediately: true`、四个 inject）。
+
+**修改**
+- `SKILL.md`：§1 的 P1 描述改为「注入 + 侧边栏只读面板」，夹具数 18/18，并注明设计稿里 7 Tab 完整版是后续；`version` 2.12.0。
+- `version.json`：`bundle` 块加 `clientEntry` / `panel`；breaking_changes 补 v2.12.0。
+- 技能包版本 2.11.1 → 2.12.0（MINOR：新增 UI 能力，不装则无变化）。
+
+**验证（本轮实测）**
+- 夹具：`node --test plugins/capability-loop/` → **18/18 pass**（host 11 + client 7）。
+- `node --check client.js` → 0 错误；`package.json` 可解析。
+- profile 解析：`dsh-capability-loop-bundle/client`、`/locale/zh.json`、`/package.json` 均能从 profile 解析到工作区文件。
+- `set_plugin include:capability-loop` → `application: applied`；`install_bundle` 依赖仍是 link（junction）。
+- 技能包：74 条目、WARN=0。
+
+**未实测 / 已知限制**
+- **面板在桌面版的实际渲染未目视确认**：当前窗口进程启动早于 client 半写入，渲染器的 client 模块图是启动时建的；没有运行 `pnpm run dev:web` 时，**必须刷新页面（Ctrl+R）或重启应用**才会加载新面板。刷新后左侧导航应出现「能力闭环」。
+- 面板文字中文硬编码（未接 locale 字典）；只读，没有「运行门禁 / 切档位」按钮；只列 `workspace.json` 里登记过的工程。
+- `on` 档真实会话的整段契约仍未实测。
+
+**回滚**：`git revert`；或卸载插件；面板随插件行关闭一起消失（不影响 skill 侧脚本）。
+
 ## v2.11.1 — 2026-11-19（PATCH：修「装了但没生效」的两个真缺陷）
 
 **起因**：按 v2.11.0 的指引实际安装 P1 插件，`install_bundle` 返回 `exitCode=0` 但 `application: failed`，诊断 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-llm'`——整行没激活。修好后注入正常，但又发现「注入成功、影子日志没记账」。
