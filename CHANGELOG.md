@@ -2,6 +2,24 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.14.0 — 2026-11-19（确认框可达性 + 复制 + 双工程接入）
+
+**新增（面板可达性 / 效率）**
+- 确认框键盘可达：`Esc` 关闭、`Tab` 在弹窗内循环（焦点陷阱）、打开时焦点自动落到「确认运行」、`aria-labelledby` 指向标题。
+- 复制：确认框可复制**完整命令**；结果区可复制**输出**或**命令**；优先 Clipboard API，失败降级 `execCommand`，1.5s 内显示「已复制」/「复制失败」。
+- 夹具新增 3 条（Esc 关闭、复制命令、复制输出/命令），React 桩升级为支持 `useEffect` 依赖变化（因此 Esc 可被夹具驱动）。
+
+**接入**
+- 「气量平衡月表（管存+罐存）」已执行 `loop-state.ps1 -Action init`（shadow / INTAKE），生成 `.dsh/loop/{project,state}.json` + `.gitignore`。面板现在应列出两个工程，切换按路径记忆；多工程数据路径由 client 夹具覆盖（切换后重读、卡头归属、旧阻断消失）。
+
+**验证**
+- 夹具 **57/57**：actions 21 + client 21 + takeover 14 + fallback 1；`node --check` 0。
+- `package-skill` → 78 条目、10 脚本 BOM 全 PASS、WARN=0。
+- **375/768 真机截图未完成**：当前前台是其他应用，自动点击/按键会打进前台窗口；新增 `scripts/ui-shot.ps1` 只做 resize + PrintWindow（不注入输入），待面板打开后执行。
+- 双工程面板真机截图同样待面板打开。
+
+**回滚**：`git revert` 本提交；接入的第二工程可删 `.dsh/loop` 回退。
+
 ## v2.13.3 — 2026-11-19（一轮自查：修 6 个真问题 + 4 处体验）
 
 **修的真问题**

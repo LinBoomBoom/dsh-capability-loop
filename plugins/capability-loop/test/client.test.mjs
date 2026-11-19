@@ -15,13 +15,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = path.resolve(HERE, '..', 'client.js')
 const CLIENT_SOURCE = fs.readFileSync(CLIENT_SRC, 'utf8')
 
-/** 极简 React 桩：createElement + hooks（useState/useCallback/useEffect）+ flush 重渲染。 */
+/** 极简 React 桩：createElement + hooks（useState/useCallback/useEffect 带 deps）+ flush 重渲染。 */
 function createReactStub() {
   const cells = []
-  const ranEffects = {}
+  const effectStates = []
   let cursor = 0
   let dirty = false
   let effectQueue = []
+
+  const sameDeps = (a, b) => Array.isArray(a) && a.length === b.length && a.every((v, i) => v === b[i])
 
   return {
     createElement(type, props, ...children) {
@@ -37,9 +39,20 @@ function createReactStub() {
       return [cells[index], setter]
     },
     useCallback(fn) { cursor += 1; return fn },
-    useEffect(fn) {
+    useEffect(fn, deps) {
       const index = cursor++
-      if (!(index in ranEffects)) { ranEffects[index] = true; effectQueue.push(fn) }
+      const previous = effectStates[index]
+      const hasDeps = Array.isArray(deps)
+      // 不传 deps 时按 React 语义“每次渲染都跑”会无限循环；夹具里降级为只跑一次。
+      const changed = previous === undefined || (hasDeps && !sameDeps(previous.deps, deps))
+      if (!changed) return
+      const record = { deps: hasDeps ? deps : null, cleanup: previous !== undefined ? previous.cleanup : undefined }
+      effectStates[index] = record
+      effectQueue.push(() => {
+        if (typeof record.cleanup === 'function') record.cleanup()
+        const cleanup = fn()
+        if (typeof cleanup === 'function') record.cleanup = cleanup
+      })
     },
     async render(Component, props, maxRounds = 8) {
       let tree
@@ -57,18 +70,45 @@ function createReactStub() {
   }
 }
 
-/** 载入 client.js 并返回 factory 产出的 body（inject/apply）。 */
+/** 载入 client.js 并返回 factory 产出的 body（inject/apply）+ 剪贴板/键盘记录。 */
 function loadClient(react) {
   let captured
-  const sandbox = { window: { __ModuleLoader__: { load(entry) { captured = entry } } }, console, AbortController }
+  const clipboardCalls = []
+  const keyHandlers = []
+  const documentStub = {
+    addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn) },
+    removeEventListener(type, fn) {
+      if (type !== 'keydown') return
+      const at = keyHandlers.indexOf(fn)
+      if (at >= 0) keyHandlers.splice(at, 1)
+    },
+    querySelector() { return null },
+    body: { appendChild() {}, removeChild() {} },
+    createElement() { return { style: {}, setAttribute() {}, select() {} } },
+    execCommand() { return false },
+  }
+  const sandbox = {
+    window: { __ModuleLoader__: { load(entry) { captured = entry } } },
+    console,
+    AbortController,
+    navigator: { clipboard: { writeText(text) { clipboardCalls.push(String(text)); return Promise.resolve() } } },
+    document: documentStub,
+  }
   vm.createContext(sandbox)
   vm.runInContext(CLIENT_SOURCE, sandbox, { filename: 'client.js' })
   assert.ok(captured, 'client.js 应调用 window.__ModuleLoader__.load')
   assert.equal(captured.id, 'dsh-capability-loop-bundle', 'id 必须等于包名')
-  return captured.factory((name) => {
+  const body = captured.factory((name) => {
     if (name === 'react') return react
     throw new Error('unexpected require: ' + name)
   })
+  body.clipboardCalls = clipboardCalls
+  body.pressKey = (key) => {
+    for (const handler of keyHandlers.slice()) {
+      handler({ key, preventDefault() {}, shiftKey: false })
+    }
+  }
+  return body
 }
 
 /**
@@ -130,7 +170,17 @@ function mount(react, options) {
   api.apply(ctx)
   const main = registrations.find((r) => r.owner === 'main')
   const side = registrations.find((r) => r.owner === 'sidebar.panellist')
-  return { api, ctx, registrations, page: main ? main.component : undefined, side, calls, commandsCalls }
+  return {
+    api,
+    ctx,
+    registrations,
+    page: main ? main.component : undefined,
+    side,
+    calls,
+    commandsCalls,
+    clipboardCalls: api.clipboardCalls,
+    pressKey: api.pressKey,
+  }
 }
 
 function collectText(node, out = []) {
@@ -498,6 +548,68 @@ test('含空格的 taskDir 用引号传，命令不被空格截断', async () =>
   findButton(tree, '确认运行').props.onClick()
   await tick()
   assert.equal(commandsCalls[0].line, '/capability-loop run gate kind=design taskDir="docs/my design"')
+})
+
+test('确认框：可复制完整命令，并显示「已复制」', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, clipboardCalls } = mount(react, { sessions: [session('s1', 'E:/proj-b', 1000)], files })
+
+  let tree = await react.render(page, {})
+  findButton(tree, '影子').props.onClick()
+  tree = await react.render(page, {})
+  assert.ok(findButton(tree, '复制命令'), '确认框应有复制命令按钮')
+  findButton(tree, '复制命令').props.onClick()
+  await tick()
+  tree = await react.render(page, {})
+  assert.equal(clipboardCalls[0], '/capability-loop mode shadow')
+  const text = collectText(tree).join(' ')
+  assert.match(text, /已复制/)
+})
+
+test('结果区：可复制输出与命令', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, clipboardCalls } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    commandsResult: { ok: true, value: { commandId: 'cmd-copy', result: { kind: 'success', text: '[门禁] PASS（exit 0）\n设计门通过' } } },
+  })
+
+  let tree = await react.render(page, {})
+  findInput(tree, 'taskDir').props.onChange({ target: { value: 'docs/design' } })
+  tree = await react.render(page, {})
+  findButton(tree, '运行门禁').props.onClick()
+  tree = await react.render(page, {})
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  tree = await react.render(page, {})
+
+  findButton(tree, '复制输出').props.onClick()
+  await tick()
+  findButton(tree, '复制命令').props.onClick()
+  await tick()
+  assert.ok(clipboardCalls.some((t) => t.indexOf('[门禁] PASS') >= 0), '复制输出应写剪贴板')
+  assert.ok(clipboardCalls.some((t) => t.indexOf('/capability-loop run gate') >= 0), '复制命令应写剪贴板：' + JSON.stringify(clipboardCalls))
+  tree = await react.render(page, {})
+  assert.match(collectText(tree).join(' '), /已复制/)
+})
+
+test('确认框：按 ESC 关闭', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, pressKey } = mount(react, { sessions: [session('s1', 'E:/proj-b', 1000)], files })
+
+  let tree = await react.render(page, {})
+  findButton(tree, '影子').props.onClick()
+  tree = await react.render(page, {})
+  assert.match(collectText(tree).join(' '), /确认运行：切到影子/)
+  pressKey('Escape')
+  await tick()
+  tree = await react.render(page, {})
+  const text = collectText(tree).join(' ')
+  assert.doesNotMatch(text, /确认运行：切到影子/)
+  assert.match(text, /能力闭环/)
 })
 
 test('命令未被受理（value=undefined）→ 结果区提示需重启注册', async () => {

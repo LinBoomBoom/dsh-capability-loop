@@ -435,6 +435,42 @@ window.__ModuleLoader__.load({
 
     /** 当前正在跑的命令的取消控制器（面板是单例，够用）。 */
     let activeController = null
+    let copyTimer = null
+
+    /** 复制到剪贴板：优先 Clipboard API，失败退到 execCommand，再失败返回 false。 */
+    function copyToClipboard(value) {
+      const text = String(value === undefined || value === null ? '' : value)
+      try {
+        if (typeof navigator !== 'undefined' && navigator !== null
+          && navigator.clipboard !== undefined && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(text).then(
+            () => true,
+            () => fallbackCopy(text),
+          )
+        }
+      } catch {
+        // 落到降级路径
+      }
+      return Promise.resolve(fallbackCopy(text))
+    }
+
+    function fallbackCopy(text) {
+      try {
+        if (typeof document === 'undefined' || document === null) return false
+        const area = document.createElement('textarea')
+        area.value = text
+        area.setAttribute('readonly', '')
+        area.style.position = 'fixed'
+        area.style.opacity = '0'
+        document.body.appendChild(area)
+        area.select()
+        const ok = document.execCommand('copy')
+        document.body.removeChild(area)
+        return ok === true
+      } catch {
+        return false
+      }
+    }
 
     function stampNow() {
       const d = new Date()
@@ -634,12 +670,20 @@ window.__ModuleLoader__.load({
     function ResultPanel(props) {
       const result = props.result
       if (result === null || result === undefined) return null
+      const label = (key, idle) => (props.copied === key ? '已复制' : (props.copied === key + ':fail' ? '复制失败' : idle))
+      const copyBtn = (key, idle, text) => h('button', {
+        type: 'button',
+        style: { ...S.btn, fontSize: 11, padding: '3px 8px', marginLeft: 6 },
+        onClick: () => props.onCopy(key, text),
+      }, label(key, idle))
       return h('div', { style: S.card },
         h('div', { style: S.cardHd }, '最近一次运行',
           h(Badge, { status: result.ok ? 'PASS' : 'FAIL' }),
           result.projectName !== undefined ? h('span', { style: S.projectChip }, result.projectName) : null,
           h('span', { style: S.hint },
             result.label + ' · ' + result.at + (typeof result.elapsed === 'number' ? ' · ' + result.elapsed + 's' : '')),
+          copyBtn('result-output', '复制输出', result.text),
+          copyBtn('result-cmd', '复制命令', '/capability-loop ' + result.line),
         ),
         h('div', { style: { padding: '0 14px 8px', ...S.meta } }, result.line),
         h('pre', { style: S.pre }, result.text),
@@ -649,11 +693,15 @@ window.__ModuleLoader__.load({
     function ConfirmModal(props) {
       const pending = props.pending
       if (pending === null || pending === undefined) return null
+      const command = '/capability-loop ' + pending.line
+      const copyLabel = props.copied === 'pending-cmd' ? '已复制' : (props.copied === 'pending-cmd:fail' ? '复制失败' : '复制命令')
       return h('div', { style: S.overlay }, h('div', {
-        style: S.modal, role: 'dialog', 'aria-modal': true, 'aria-label': '确认运行',
+        style: S.modal, role: 'dialog', 'aria-modal': true,
+        'aria-labelledby': 'cl-confirm-title',
+        'data-cl-modal': '1',
       },
         h('div', { style: S.modalBar }),
-        h('h3', { style: S.modalHd }, '确认运行：' + pending.label),
+        h('h3', { id: 'cl-confirm-title', style: S.modalHd }, '确认运行：' + pending.label),
         h('div', { style: S.modalBody },
           h('div', null, '工程：' + (pending.projectName !== undefined ? pending.projectName + '（' + pending.workspace + '）' : pending.workspace)),
           h('div', { style: { marginTop: 10 } }, '命令：'),
@@ -664,7 +712,12 @@ window.__ModuleLoader__.load({
               borderRadius: 6, whiteSpace: 'pre-wrap',
               border: '1px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-primary)',
             },
-          }, '/capability-loop ' + pending.line),
+          }, command),
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: 8 } },
+            h('button', {
+              type: 'button', style: { ...S.btn, fontSize: 11, padding: '4px 10px' },
+              onClick: () => props.onCopy('pending-cmd', command),
+            }, copyLabel)),
           pending.note !== undefined ? h('div', { style: { marginTop: 10 } }, pending.note) : null,
         ),
         h('div', { style: { ...S.modalFt, borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 14 } },
@@ -672,7 +725,8 @@ window.__ModuleLoader__.load({
             type: 'button', style: { ...S.btn, minWidth: 88, padding: '8px 14px' }, onClick: props.onCancel,
           }, '取消'),
           h('button', {
-            type: 'button', style: { ...S.btn, ...S.btnPrimary, minWidth: 96, padding: '8px 14px' }, onClick: props.onConfirm,
+            type: 'button', 'data-cl-primary': '1',
+            style: { ...S.btn, ...S.btnPrimary, minWidth: 96, padding: '8px 14px' }, onClick: props.onConfirm,
           }, '确认运行'),
         ),
       ))
@@ -863,6 +917,7 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = React.useState(null)
       const [running, setRunning] = React.useState(null)
       const [result, setResult] = React.useState(null)
+      const [copied, setCopied] = React.useState(null)
       const load = React.useCallback(() => {
         setView((prev) => ({ ...prev, status: 'loading' }))
         const source = services
@@ -876,6 +931,54 @@ window.__ModuleLoader__.load({
         )
       }, [services])
       React.useEffect(() => { load() }, [load])
+
+      // 确认框：ESC 关闭 + Tab 焦点陷阱 + 打开时把焦点放到「确认运行」
+      React.useEffect(() => {
+        if (pending === null || pending === undefined || typeof document === 'undefined') return undefined
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            setPending(null)
+            return
+          }
+          if (event.key !== 'Tab') return
+          const modal = document.querySelector('[data-cl-modal="1"]')
+          if (modal === null) return
+          const focusables = modal.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])')
+          if (focusables.length === 0) return
+          const first = focusables[0]
+          const last = focusables[focusables.length - 1]
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault()
+            last.focus()
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault()
+            first.focus()
+          }
+        }
+        document.addEventListener('keydown', onKeyDown, true)
+        const modal = document.querySelector('[data-cl-modal="1"]')
+        if (modal !== null) {
+          const primary = modal.querySelector('[data-cl-primary="1"]')
+          if (primary !== null && typeof primary.focus === 'function') primary.focus()
+        }
+        return () => document.removeEventListener('keydown', onKeyDown, true)
+      }, [pending])
+
+      const markCopied = (key, ok) => {
+        setCopied(ok === true ? key : key + ':fail')
+        try {
+          if (typeof setTimeout === 'function') {
+            if (copyTimer !== null) clearTimeout(copyTimer)
+            copyTimer = setTimeout(() => setCopied(null), 1500)
+          }
+        } catch {
+          // 没有定时器就保持状态，不影响功能
+        }
+      }
+      const copyAndMark = (key, text) => {
+        copyToClipboard(text).then((ok) => markCopied(key, ok), () => markCopied(key, false))
+      }
 
       // 选中的工程按**路径**记，不按索引——刷新/动作后工程顺序可能变，索引会指错。
       const foundIndex = view.projects.findIndex((item) => item.workspace.path === selectedPath)
@@ -992,9 +1095,15 @@ window.__ModuleLoader__.load({
           },
         }),
         h(RunningPanel, { running, onCancelRun: cancelRun }),
-        h(ResultPanel, { result }),
+        h(ResultPanel, { result, copied, onCopy: copyAndMark }),
       ),
-      h(ConfirmModal, { pending, onCancel: () => setPending(null), onConfirm: confirmPending }),
+      h(ConfirmModal, {
+        pending,
+        copied,
+        onCopy: copyAndMark,
+        onCancel: () => setPending(null),
+        onConfirm: confirmPending,
+      }),
       )
     }
 

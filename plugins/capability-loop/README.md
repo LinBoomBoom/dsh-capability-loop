@@ -116,7 +116,8 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 | 影子计数 | `run sync-shadow` |
 | 切档位 | `mode on\|shadow\|off` |
 
-- 每个动作先弹**确认框**（工程 + 完整命令 + 说明），确认后才执行；运行中可**取消**（AbortSignal 一并中止子进程）。
+- 每个动作先弹**确认框**（工程 + 完整命令 + 说明），确认后才执行；`Esc` 关闭、`Tab` 在弹窗内循环、打开时焦点落在「确认运行」。
+- 确认框可**复制完整命令**；结果区可**复制输出**或**复制命令**（Clipboard API，失败自动降级到 `execCommand`）。
 - 安全：`ACTIONS` 白名单；`kind` 枚举、路径 token 禁 `..`、不拼 shell；动作级超时 + 5s grace；输出只回尾部 40 行。
 - 同一实现也给命令行：在会话里直接输入 `/capability-loop run audit`。
 - **部署注意**：Host 半的命令在应用启动时注册，改 `index.js`/`actions.js` 后需**重启应用**；`client.js` 改动刷新页面（Ctrl+R）即可。
@@ -144,7 +145,7 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 ## 已验证 / 未验证
 
 **已验证**
-- 夹具：**46/46**（actions 17 + client 15 + takeover 13 + fallback 1），逐文件跑 `node <file>`（沙箱里 `node --test <dir>` 会因 spawn 管道 EPERM）。
+- 夹具：**57/57**（actions 21 + client 21 + takeover 14 + fallback 1），逐文件跑 `node <file>`（沙箱里 `node --test <dir>` 会因 spawn 管道 EPERM）。
   - host：未标记零注入、off 不注入、shadow 一行 + 影子日志 + 同会话不重复、on 契约 ≤1600 且含阶段/门禁/阻断/下一步、注入位置、resume/同批去重、fs 抛错 fail-open、坏 JSON 降级、无 `dsh-llm` 时手工构造兜底、命令注册与空输入/未知动作/缺 subprocess/aborted 四条。
   - actions：白名单、`kind` 枚举、`taskDir` 禁 `..`、argv 构造（gate/audit/mode/sync-shadow/pack/handoff-audit）、缺参与非法值的拒绝、非零退出回 FAIL、abort 不 spawn。
   - client：两个 slot 注册、有工程渲染、多工程切换、空态/异常、运行中心动作按钮、切档位确认→`commands.execute` 调用、命令未受理提示、无 `remote.commands` 提示、取消 abort。

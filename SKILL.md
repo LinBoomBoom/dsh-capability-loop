@@ -1,6 +1,6 @@
 ---
 name: dsh-capability-loop
-version: 2.13.3
+version: 2.14.0
 description: DSH 能力升级与治理闭环。【重点】体检/修复 DSH 自身：九组审计→检索/桌面壳/Token 死重量修复→门禁验收→经验写回；适用升级/优化/体检 DSH、治理插件与技能、修会话检索或进程退出、降 Token、迭代本 skill。【配套】项目接管（三档+状态源）、接入六问、需求/设计/测试串接、Trae 交接体检（含网关前缀）、grill 自对抗、迁移与上架。单点需求/设计/测试走各自规范。
 ---
 
@@ -42,7 +42,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<skill>\scripts\loop-state.
 
 **状态源 `.dsh/loop/state.json`**：唯一写入方是脚本（`loop-state.ps1` / `loop-gate.ps1` / `capability-audit.ps1`），记录 `mode / stage / next / checks / blockers / metrics / digest`；`loop-gate` 与 `capability-audit` 在**已标记工程**上自动写回，未标记工程零变化。面板（P2，设计稿 `docs/design/2026-11-18-capability-loop-panel.md`）只读它。
 
-**P0 / P1 / P2**：P0 = `AGENTS.md` 12 行片段（`templates/agents-loop-fragment.md`，**今天可用**，软接管）；P1 = 宿主插件 `plugins/capability-loop/`：`agent/pre-step` 折入契约（`on` 完整契约 / `shadow` 一行，fail-open + resume 去重 + 影子日志）；P2 = 同一 bundle 的 client 半：侧边栏「能力闭环」v1（档位/阶段/门禁/阻断/下一步，经 `remote.session.list` + `workspaceFiles.read(sessionId, '.dsh/loop/…')` 读，纯只读）**+ 运行中心**（门禁/体检/交接体检/预检/打包/视觉探测/版本检查/影子计数 + 切档位；面板只发 `/capability-loop <动作>`，Host 侧白名单 + 参数校验 + 超时/取消，与命令行同一实现）。**夹具 46/46**；本机 profile 已装并实测：`application: applied`、`shadow` 与 `on` 两种注入都收到（`on` 于 2026-11-19 在本工程真实会话完成）。**面板动作依赖的 Host 命令要重启应用才注册**（client 半刷新页面即可）；真机点击验收待补，7 Tab 完整版仍是后续。
+**P0 / P1 / P2**：P0 = `AGENTS.md` 12 行片段（`templates/agents-loop-fragment.md`，**今天可用**，软接管）；P1 = 宿主插件 `plugins/capability-loop/`：`agent/pre-step` 折入契约（`on` 完整契约 / `shadow` 一行，fail-open + resume 去重 + 影子日志）；P2 = 同一 bundle 的 client 半：侧边栏「能力闭环」v1（档位/阶段/门禁/阻断/下一步，经 `remote.session.list` + `workspaceFiles.read(sessionId, '.dsh/loop/…')` 读，纯只读）**+ 运行中心**（门禁/体检/交接体检/预检/打包/视觉探测/版本检查/影子计数 + 切档位；面板只发 `/capability-loop <动作>`，Host 侧白名单 + 参数校验 + 超时/取消，与命令行同一实现）。**夹具 57/57**；本机 profile 已装并实测：`application: applied`、`shadow` 与 `on` 两种注入都收到（`on` 于 2026-11-19 在本工程真实会话完成）。**面板动作依赖的 Host 命令要重启应用才注册**（client 半刷新页面即可）；真机点击验收待补，7 Tab 完整版仍是后续。
 
 ## 2. 七阶段闭环（按需取段，不强行走完）
 

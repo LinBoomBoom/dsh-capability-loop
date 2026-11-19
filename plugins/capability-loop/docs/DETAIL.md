@@ -26,7 +26,7 @@
 面板 → `ctx.remote.commands.execute(sessionId, '/capability-loop …')` → Host 命令 handler → `actions.js`（白名单 + 参数校验）→ 子进程。
 
 - 动作：`run gate kind=… taskDir=…` / `run audit` / `run handoff-audit slug=…` / `run preflight keyword=…` / `run pack handle=…` / `run visual` / `run skill-status` / `run sync-shadow` / `mode on|shadow|off`。
-- 每个动作先确认（工程 + 完整命令 + 说明）；运行中可取消（中止子进程）；输出只回尾部 40 行。
+- 每个动作先确认（工程 + 完整命令 + 说明）；`Esc` 关闭、`Tab` 焦点循环；确认框与结果区都能复制命令/输出；运行中可取消（中止子进程）；输出只回尾部 40 行。
 - **Host 命令在应用启动时注册**：改 `index.js`/`actions.js` 后需重启应用；改 `client.js` 刷新页面即可。
 
 ## 接入一个工程
