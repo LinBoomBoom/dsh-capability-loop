@@ -128,15 +128,25 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55,
       },
       overlay: {
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,.42)',
-        display: 'grid', placeItems: 'center', zIndex: 200,
+        position: 'fixed', inset: 0,
+        background: 'var(--dsw-alias-bg-mask-3, rgba(0,0,0,.55))',
+        backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+        display: 'grid', placeItems: 'center', zIndex: 9999,
       },
       modal: {
-        width: 560, maxWidth: 'calc(100vw - 40px)', background: 'var(--dsw-alias-bg-base)',
-        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 10,
-        padding: '18px 20px', boxShadow: '0 12px 32px rgba(0,0,0,.28)',
+        width: 560, maxWidth: 'calc(100vw - 40px)', maxHeight: '82vh', overflow: 'auto',
+        // 两层背景：先铺主题色，再压一层静态深色底——玻璃皮肤把 alias 调成半透明时仍不透视。
+        background: 'linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)), var(--dsw-static-neutral-bluish-950)',
+        border: '1px solid var(--dsw-alias-border-l3)',
+        borderRadius: 12, padding: '20px 22px',
+        boxShadow: '0 24px 64px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.05)',
+        backdropFilter: 'blur(24px) saturate(140%)', WebkitBackdropFilter: 'blur(24px) saturate(140%)',
       },
-      modalHd: { margin: 0, fontSize: 14, fontWeight: 600 },
+      modalBar: {
+        height: 3, borderRadius: 3, marginBottom: 14,
+        background: 'var(--dsw-alias-state-business-primary)',
+      },
+      modalHd: { margin: 0, fontSize: 16, fontWeight: 600, lineHeight: 1.4 },
       modalBody: { marginTop: 10, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.6 },
       modalFt: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 },
       empty: { textAlign: 'center', padding: '56px 0 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 },
@@ -585,21 +595,28 @@ window.__ModuleLoader__.load({
       return h('div', { style: S.overlay }, h('div', {
         style: S.modal, role: 'dialog', 'aria-modal': true, 'aria-label': '确认运行',
       },
+        h('div', { style: S.modalBar }),
         h('h3', { style: S.modalHd }, '确认运行：' + pending.label),
         h('div', { style: S.modalBody },
           h('div', null, '工程：' + pending.workspace),
-          h('div', { style: { marginTop: 8 } }, '命令：'),
+          h('div', { style: { marginTop: 10 } }, '命令：'),
           h('code', {
             style: {
-              ...S.mono, display: 'block', marginTop: 4, padding: '8px 10px',
-              background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 6, whiteSpace: 'pre-wrap',
+              ...S.mono, display: 'block', marginTop: 4, padding: '10px 12px',
+              background: 'linear-gradient(var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-1)), var(--dsw-static-neutral-bluish-900)',
+              borderRadius: 6, whiteSpace: 'pre-wrap',
+              border: '1px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-primary)',
             },
           }, '/capability-loop ' + pending.line),
-          pending.note !== undefined ? h('div', { style: { marginTop: 8 } }, pending.note) : null,
+          pending.note !== undefined ? h('div', { style: { marginTop: 10 } }, pending.note) : null,
         ),
-        h('div', { style: S.modalFt },
-          h('button', { type: 'button', style: S.btn, onClick: props.onCancel }, '取消'),
-          h('button', { type: 'button', style: { ...S.btn, ...S.btnPrimary }, onClick: props.onConfirm }, '确认运行'),
+        h('div', { style: { ...S.modalFt, borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 14 } },
+          h('button', {
+            type: 'button', style: { ...S.btn, minWidth: 88, padding: '8px 14px' }, onClick: props.onCancel,
+          }, '取消'),
+          h('button', {
+            type: 'button', style: { ...S.btn, ...S.btnPrimary, minWidth: 96, padding: '8px 14px' }, onClick: props.onConfirm,
+          }, '确认运行'),
         ),
       ))
     }

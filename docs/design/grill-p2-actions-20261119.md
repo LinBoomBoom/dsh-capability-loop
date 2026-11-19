@@ -38,6 +38,7 @@
 | R2 | 「取消运行」是假取消 | `executeAction` 只检查信号，没有把 signal 传进 `spawn` | `runSpawn` 合并 AbortController，abort 一并中止子进程；夹具断言 signal 已 abort | `actions.test.mjs` 17/17；`client.test.mjs` 取消用例 |
 | R3 | client 夹具 5 条 ReferenceError | vm 沙箱没有 `AbortController` | 沙箱显式注入 | client 15/15 |
 | R4 | 面板 patch 后语法错（样式块多一个 `}`、`PanelIcon` 头重复） | 大段替换脚本锚点不严 | 修正脚本按插入块长度截断旧函数体；`node --check` 卡口 | `node --check client.js` → 0 |
+| R5 | 弹窗在真机上「糊在页面上」：遮罩太淡、面板背景在这套玻璃皮肤下不透视也像透视、标题不抢眼（用户截图） | 只用单个 alias 背景（皮肤里可能是半透明）；遮罩 42% 偏轻；z-index 200 偏低 | 遮罩改 `bg-mask-3` + 4px 模糊 + z-index 9999；弹窗改「主题色叠静态深色底」两层背景 + 24px 模糊 + 双层阴影；加顶部色条/页脚分隔线/更大按钮 | `node --check` 0；client 15/15；**真机视觉复验待用户刷新后点一次**（前台被其他应用占用，自动点击会打到前台，未做） |
 
 ## 4. 结论
 
