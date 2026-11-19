@@ -224,3 +224,23 @@ test('已 abort 的信号 → 不启动子进程，回「已取消」', async ()
   assert.match(out.text, /已取消/)
   assert.equal(record.length, 0, '不应 spawn')
 })
+
+test('init：走 loop-state.ps1 -Action init，工程名可含中文', async () => {
+  const record = []
+  const out = await executeAction(makeCtx(record), CFG, 'run init name=气量平衡月表')
+  assert.equal(out.ok, true)
+  const argv = record[0].argv
+  assert.ok(argv.some((a) => a.endsWith('loop-state.ps1')))
+  assert.deepEqual(argv.slice(argv.indexOf('-Action'), argv.indexOf('-Action') + 2), ['-Action', 'init'])
+  assert.deepEqual(argv.slice(argv.indexOf('-Root'), argv.indexOf('-Root') + 2), ['-Root', WS])
+  assert.deepEqual(argv.slice(argv.indexOf('-ProjectName'), argv.indexOf('-ProjectName') + 2), ['-ProjectName', '气量平衡月表'])
+  assert.match(out.text, /\[接入工程\]/)
+})
+
+test('init：不传 name 时用目录名', async () => {
+  const record = []
+  await executeAction(makeCtx(record), CFG, 'run init')
+  const argv = record[0].argv
+  assert.ok(argv.includes('-ProjectName'))
+  assert.equal(argv[argv.indexOf('-ProjectName') + 1], path.basename(WS))
+})

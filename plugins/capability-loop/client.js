@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
 
     const PANEL_ID = 'capability-loop'
     // 面板自身版本：用来判断渲染器加载的是不是最新 client.js（桌面正式版没有 Ctrl+R，见 README）
-    const PANEL_VERSION = '2.14.2'
+    const PANEL_VERSION = '2.16.0'
     const STAGE_ORDER = ['INTAKE', 'AUDIT', 'FIX', 'WIRE', 'HANDOFF', 'GRILL', 'GATE']
     const CHECK_LABEL = {
       design: '设计门',
@@ -313,26 +313,29 @@ window.__ModuleLoader__.load({
           byWorkspace.set(cwd, { cwd, sessionId: item.sessionId, stamp })
         }
       }
-      const workspaces = Array.from(byWorkspace.values()).sort((a, b) => b.stamp - a.stamp).slice(0, 12)
+      const workspaces = Array.from(byWorkspace.values()).sort((a, b) => b.stamp - a.stamp).slice(0, 30)
 
       const projects = []
       for (const workspace of workspaces) {
         const project = await readJsonViaSession(filesNamespace, workspace.sessionId, '.dsh/loop/project.json')
-        if (project === null) continue
-        const state = await readJsonViaSession(filesNamespace, workspace.sessionId, '.dsh/loop/state.json')
+        const state = project === null ? null : await readJsonViaSession(filesNamespace, workspace.sessionId, '.dsh/loop/state.json')
         projects.push({
           workspace: {
             id: workspace.cwd,
             path: workspace.cwd,
-            title: typeof project.name === 'string' && project.name !== '' ? project.name : workspace.cwd,
+            title: typeof project === 'object' && project !== null && typeof project.name === 'string' && project.name !== ''
+              ? project.name
+              : workspace.cwd,
             sessionId: workspace.sessionId,
           },
           project,
           state,
         })
       }
+      // 已接入的排前面；未接入的也列出来，面板里可直接接入
+      projects.sort((a, b) => (b.project !== null ? 1 : 0) - (a.project !== null ? 1 : 0))
       if (projects.length === 0 && lastDiagnostic === '') {
-        recordDiagnostic('读了 ' + workspaces.length + ' 个工作区，都没有 .dsh/loop/project.json（未接入）')
+        recordDiagnostic('读了 ' + workspaces.length + ' 个工作区，但都没有可用会话读取状态')
       }
       return { projects }
     }
@@ -356,16 +359,16 @@ window.__ModuleLoader__.load({
       }
       rows.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
       const projects = []
-      for (const workspace of rows.slice(0, 12)) {
+      for (const workspace of rows.slice(0, 30)) {
         const project = await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/project.json'))
-        if (project === null) continue
-        const state = await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/state.json'))
+        const state = project === null ? null : await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/state.json'))
         projects.push({
           workspace: { ...workspace, sessionId: '' },
           project,
           state,
         })
       }
+      projects.sort((a, b) => (b.project !== null ? 1 : 0) - (a.project !== null ? 1 : 0))
       return { projects }
     }
 
@@ -528,6 +531,15 @@ window.__ModuleLoader__.load({
         return { key, label: '上架打包', line: 'run pack handle=' + quoteArg(handle), note: '校验 frontmatter/version/CHANGELOG + manifest + SHA256 + ZIP。' }
       }
       if (key === 'visual') return { key, label: '视觉验收探测', line: 'run visual', note: 'exit 2 = 权限受限，必须显式让用户选 A/B/C。' }
+      if (key === 'init') {
+        const name = String(f.projectName || '').trim()
+        return {
+          key,
+          label: '接入当前工程',
+          line: 'run init' + (name !== '' ? ' name=' + quoteArg(name) : ''),
+          note: '创建 .dsh/loop/project.json + state.json，默认影子档（只记录不阻断）；之后可随时切档位。',
+        }
+      }
       if (key === 'skill-status') return { key, label: '版本检查', line: 'run skill-status' }
       if (key === 'sync-shadow') return { key, label: '影子计数', line: 'run sync-shadow' }
       return null
@@ -739,13 +751,14 @@ window.__ModuleLoader__.load({
     function ProjectView(props) {
       const project = props.project
       const state = props.state
+      const registered = project !== null && project !== undefined
       const info = stageIndexOf(state)
       const checks = checksOf(state)
       const tally = countChecks(checks)
       const mode = state !== null && state !== undefined && typeof state.mode === 'string'
         ? state.mode
-        : (project !== null && project !== undefined && typeof project.mode === 'string' ? project.mode : 'off')
-      const name = project !== null && project !== undefined && typeof project.name === 'string' ? project.name : '未命名工程'
+        : (registered && typeof project.mode === 'string' ? project.mode : 'off')
+      const name = registered && typeof project.name === 'string' && project.name !== '' ? project.name : '未接入'
       const blockers = state !== null && state !== undefined && Array.isArray(state.blockers) ? state.blockers : []
       const next = state !== null && state !== undefined && state.next !== undefined && state.next !== null ? state.next : undefined
       const version = state !== null && state !== undefined && typeof state.skillVersion === 'string' ? state.skillVersion : '—'
@@ -807,16 +820,35 @@ window.__ModuleLoader__.load({
             h('span', { style: S.projectPath }, props.workspace.path),
             h('span', { style: S.hint },
               Array.isArray(props.projects) && props.projects.length > 1
-                ? '已接入工程 ' + props.projects.length + ' 个 · 切换后重读该工程状态'
-                : '只列已接入工程；未接入的跑 init 后出现'),
+                ? '共 ' + props.projects.length + ' 个可用工作区（含未接入）· 切换后重读'
+                : '列出全部有会话的工作区；未接入的可一键接入'),
           ),
-          h('div', { style: props.compact === true ? S.kpisCompact : S.kpis },
-            kpis.map((kpi) => h('div', { key: kpi.id, style: S.kpi },
-              h('span', { style: S.kpiK }, kpi.k),
-              h('span', { style: S.kpiV }, kpi.v),
-              h('span', { style: S.kpiM }, kpi.m),
-            )),
-          ),
+          registered
+            ? null
+            : h('div', { style: { ...S.card, marginTop: 12 } },
+              h('div', { style: S.cardHd }, '该工作区尚未接入治理闭环',
+                h('span', { style: S.projectChip }, props.workspace.title),
+                h('span', { style: S.hint }, '接入后才会注入契约、才有阶段/门禁/阻断')),
+              h('div', { style: { ...S.row, ...S.meta, borderTop: 'none', lineHeight: 1.6 } },
+                '接入会在工程根写 .dsh/loop/project.json 与 state.json（默认影子档，只记录、不阻断对话），不改动任何业务代码。'),
+              h('div', { style: { padding: '0 14px 14px' } },
+                h('button', {
+                  type: 'button',
+                  style: { ...S.btn, ...S.btnPrimary },
+                  disabled: props.sessionId === '' || props.sessionId === undefined,
+                  onClick: () => props.onRequest('init'),
+                }, '接入这个工作区（影子档）'),
+              ),
+            ),
+          registered
+            ? h('div', { style: props.compact === true ? S.kpisCompact : S.kpis },
+              kpis.map((kpi) => h('div', { key: kpi.id, style: S.kpi },
+                h('span', { style: S.kpiK }, kpi.k),
+                h('span', { style: S.kpiV }, kpi.v),
+                h('span', { style: S.kpiM }, kpi.m),
+              )),
+            )
+            : null,
           h(ActionCenter, {
             fields: props.fields,
             setField: props.setField,
@@ -826,55 +858,63 @@ window.__ModuleLoader__.load({
             onRequest: props.onRequest,
           }),
         ),
-        h('div', { style: S.card },
-          h('div', { style: S.cardHd }, '阶段', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, '七阶段闭环')),
-          h(StageTrack, { index: info.index }),
-        ),
-        h('div', { style: S.card },
-          h('div', { style: S.cardHd }, '门禁与证据', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, '点击行展开命令与退出码')),
-          checks.length === 0
-            ? h('div', { style: { ...S.row, ...S.meta } }, '还没有门禁记录：跑一次 loop-gate.ps1 就会出现在这里。')
-            : checks.map((row) => h('div', { key: row.key, style: S.row },
-              h('span', { style: S.name }, row.label),
-              h(Badge, { status: row.status }),
-              h('span', { style: S.meta }, 'exit ' + row.exit),
-              h('span', { style: S.right }, row.at),
-            )),
-        ),
-        h('div', { style: S.card },
-          h('div', { style: S.cardHd }, '阻断与下一步', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, blockers.length + ' 项阻断')),
-          blockers.length === 0
-            ? h('div', { style: { ...S.row, ...S.meta } }, '无阻断')
-            : blockers.map((b, i) => h('div', { key: (b.id || 'b') + i, style: S.row },
-              h('span', { style: S.badge }, b.id || 'D-?'),
-              h('span', { style: { flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-primary)' } }, b.text || ''),
-              h('span', { style: { ...S.right, flex: 'none' } }, (b.owner || '') + (b.due ? ' · ' + b.due : '')),
-            )),
-          next !== undefined
-            ? h('div', { style: { ...S.row, alignItems: 'flex-start' } },
-              h('span', { style: S.name }, '下一步'),
-              h('span', { style: { flex: 1, color: 'var(--dsw-alias-label-primary)' } }, String(next.label || '按 state.next 执行')),
-            )
-            : null,
-          next !== undefined && next.command
-            ? h('div', { style: { padding: '0 14px 12px' } }, h('code', { style: S.mono }, String(next.command)))
-            : null,
-        ),
+        registered
+          ? h('div', null,
+            h('div', { style: S.card },
+              h('div', { style: S.cardHd }, '阶段', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, '七阶段闭环')),
+              h(StageTrack, { index: info.index }),
+            ),
+            h('div', { style: S.card },
+              h('div', { style: S.cardHd }, '门禁与证据', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, '点击行展开命令与退出码')),
+              checks.length === 0
+                ? h('div', { style: { ...S.row, ...S.meta } }, '还没有门禁记录：跑一次「环境验收」或「门禁」就会出现在这里。')
+                : checks.map((row) => h('div', { key: row.key, style: S.row },
+                  h('span', { style: S.name }, row.label),
+                  h(Badge, { status: row.status }),
+                  h('span', { style: S.meta }, 'exit ' + row.exit),
+                  h('span', { style: S.right }, row.at),
+                )),
+            ),
+            h('div', { style: S.card },
+              h('div', { style: S.cardHd }, '阻断与下一步', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, blockers.length + ' 项阻断')),
+              blockers.length === 0
+                ? h('div', { style: { ...S.row, ...S.meta } }, '无阻断')
+                : blockers.map((b, i) => h('div', { key: (b.id || 'b') + i, style: S.row },
+                  h('span', { style: S.badge }, b.id || 'D-?'),
+                  h('span', { style: { flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-primary)' } }, b.text || ''),
+                  h('span', { style: { ...S.right, flex: 'none' } }, (b.owner || '') + (b.due ? ' · ' + b.due : '')),
+                )),
+              next !== undefined
+                ? h('div', { style: { ...S.row, alignItems: 'flex-start' } },
+                  h('span', { style: S.name }, '下一步'),
+                  h('span', { style: { flex: 1, color: 'var(--dsw-alias-label-primary)' } }, String(next.label || '按 state.next 执行')),
+                )
+                : null,
+              next !== undefined && next.command
+                ? h('div', { style: { padding: '0 14px 12px' } }, h('code', { style: S.mono }, String(next.command)))
+                : null,
+            ),
+          )
+          : null,
         h('div', { style: { ...S.meta, marginTop: 12 } },
-          '状态源：' + joinPath(props.workspace.path, '.dsh/loop/state.json'),
+          registered
+            ? '状态源：' + joinPath(props.workspace.path, '.dsh/loop/state.json')
+            : '未接入：' + joinPath(props.workspace.path, '.dsh/loop/') + ' 不存在',
         ),
       )
     }
 
     function EmptyView(props) {
       return h('div', { style: S.empty },
-        h('div', { style: { fontSize: 16, fontWeight: 600 } }, '还没有已接入的工程'),
-        h('div', { style: { ...S.meta, maxWidth: 520, lineHeight: 1.6 } },
-          '在任意工程根跑一次接入命令，这里就会显示档位、阶段、门禁与阻断：'),
+        h('div', { style: { fontSize: 16, fontWeight: 600 } }, '还没有可用的工作区会话'),
+        h('div', { style: { ...S.meta, maxWidth: 560, lineHeight: 1.6 } },
+          '面板通过「工作区的最近一个会话」读取状态；当前没有任何会话，所以读不到。先在这个工作区开一个新会话，再回来点「重新扫描」。'),
+        h('div', { style: { ...S.meta, maxWidth: 560, lineHeight: 1.6 } },
+          '也可以在任意工程根直接接入（命令行方式）：'),
         h('code', { style: { ...S.mono, background: 'var(--dsw-alias-bg-layer-2)', padding: '8px 10px', borderRadius: 6 } },
           'loop-state.ps1 -Action init -Root <工程根> -ProjectName <名称>'),
         h('div', { style: { ...S.meta, marginTop: 4 } },
-          '读取诊断：' + (props.diagnostic === '' ? '未发生错误（只是没找到已标记工程）' : props.diagnostic)),
+          '读取诊断：' + (props.diagnostic === '' ? '未发生错误（只是没有会话可用）' : props.diagnostic)),
         props.onRefresh ? h('button', { style: S.btn, onClick: props.onRefresh, type: 'button' }, '重新扫描') : null,
       )
     }

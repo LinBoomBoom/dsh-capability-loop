@@ -90,6 +90,7 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 
 1. `ctx.remote.session.list({})` 拿会话列表（`SessionSummary` 带 `sessionId` 与 `cwd`）；
 2. 每个 `cwd` 取最近的一个会话作凭据，`ctx.remote.workspaceFiles.read(sessionId, '.dsh/loop/project.json', {}, signal)` → 再读 `state.json`；相对路径落在该会话的工作区根。
+3. **下拉列出所有有会话的工作区**（最多 30 个），已接入的排在前面；未接入的显示「接入这个工作区（影子档）」按钮，点一下即写入 `.dsh/loop/`（走会话命令 `run init`，不是面板直接写文件）。
 
 **不用** `/api/file`：`ctx.connection` 的浏览器半边没有 `fetch`（那是 Host 侧 Connection 的方法），桌面渲染器又在 `dsh-app://` 源上，`globalThis.fetch('/api/file')` 命中不了 HTTP API。
 **`inject` 要写点号键**：`['slots','connection','remote','remote.session','remote.workspaceFiles']`，否则运行时报 `cannot get property "remote.session" without inject`（见 skill `references/70-playbook.md` ERR-20261119-03）。
@@ -108,6 +109,7 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 
 | 动作 | 命令 |
 |---|---|
+| 接入当前工程 | `run init [name=<工程名>]`（写 `.dsh/loop/`，默认影子档） |
 | 门禁 | `run gate kind=design\|requirement\|test\|all taskDir=<必填> [grill=1]` |
 | 环境验收 | `run env`（等价 `loop-gate -Environment`，不需要 taskDir） |
 | 能力体检 | `run audit` |
@@ -148,7 +150,7 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 ## 已验证 / 未验证
 
 **已验证**
-- 夹具：**57/57**（actions 21 + client 21 + takeover 14 + fallback 1），逐文件跑 `node <file>`（沙箱里 `node --test <dir>` 会因 spawn 管道 EPERM）。
+- 夹具：**60/60**（actions 23 + client 22 + takeover 14 + fallback 1），逐文件跑 `node <file>`（沙箱里 `node --test <dir>` 会因 spawn 管道 EPERM）。
   - host：未标记零注入、off 不注入、shadow 一行 + 影子日志 + 同会话不重复、on 契约 ≤1600 且含阶段/门禁/阻断/下一步、注入位置、resume/同批去重、fs 抛错 fail-open、坏 JSON 降级、无 `dsh-llm` 时手工构造兜底、命令注册与空输入/未知动作/缺 subprocess/aborted 四条。
   - actions：白名单、`kind` 枚举、`taskDir` 禁 `..`、argv 构造（gate/audit/mode/sync-shadow/pack/handoff-audit）、缺参与非法值的拒绝、非零退出回 FAIL、abort 不 spawn。
   - client：两个 slot 注册、有工程渲染、多工程切换、空态/异常、运行中心动作按钮、切档位确认→`commands.execute` 调用、命令未受理提示、无 `remote.commands` 提示、取消 abort。

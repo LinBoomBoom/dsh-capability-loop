@@ -17,7 +17,7 @@
 
 1. 安装后在 **Plugins** 页确认 `Capability Loop` 那一行是开的；
 2. 左侧导航出现 **能力闭环**（图标是环形箭头）；
-3. 点开就是控制台；没有已接入工程时显示接入命令。
+3. 点开就是控制台：下拉里是**所有有会话的工作区**（不只已接入的）；未接入的会显示一次性接入按钮（写 `.dsh/loop/`，默认影子档）。
 
 面板数据经 `ctx.remote.session.list` 找会话（含 `cwd`），再用 `ctx.remote.workspaceFiles.read(sessionId, '.dsh/loop/…')` 读状态，**只读**。动作则走会话命令通道（见下）。
 

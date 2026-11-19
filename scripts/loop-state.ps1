@@ -32,7 +32,7 @@ param(
     [string]$Owner = '',
     [string]$Due = '',
     [int]$ShadowTarget = 3,
-    [string]$SkillVersion = '2.15.0',
+    [string]$SkillVersion = '2.16.0',
     [switch]$Force,
     [switch]$Json
 )

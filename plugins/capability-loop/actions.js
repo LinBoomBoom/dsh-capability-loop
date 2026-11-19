@@ -23,6 +23,7 @@ const ACTIONS = {
   visual: { kind: 'ps', script: 'visual-qa-check.ps1', timeoutMs: 180000, label: '视觉探测' },
   'skill-status': { kind: 'ps', script: 'skill-status.ps1', timeoutMs: 120000, label: '版本检查' },
   'sync-shadow': { kind: 'state', label: '影子计数' },
+  init: { kind: 'state', label: '接入工程' },
   mode: { kind: 'state', label: '切档位' },
 }
 
@@ -208,6 +209,7 @@ function usageText() {
     '  run visual out=<输出目录>                                              视觉探测',
     '  run skill-status                                                      版本检查',
     '  run sync-shadow                                                       影子观察计数',
+    '  run init [name=<工程名>]                                              接入当前工程（默认影子档）',
     '  mode on|shadow|off                                                    切档位',
     '',
     '也可以用面板里的按钮触发同样的命令。',
@@ -245,6 +247,14 @@ export async function executeAction(ctx, cfg, rawInput, signal) {
       const value = String(raw || '').trim().toLowerCase()
       if (MODES.indexOf(value) === -1) return { ok: false, text: 'mode 需要 on|shadow|off（收到：' + String(raw || '') + '）' }
       argv = ['-Action', 'set-mode', '-Root', cwd, '-Mode', value]
+    } else if (action === 'init') {
+      // 工程名允许中文/空格，但拒绝控制字符；不传则用目录名
+      const rawName = String(parsed.args.name || '').trim()
+      if (rawName !== '' && /[\u0000-\u001f]/.test(rawName)) {
+        return { ok: false, text: 'init 的 name 含控制字符' }
+      }
+      const projectName = rawName !== '' ? rawName : path.basename(cwd)
+      argv = ['-Action', 'init', '-Root', cwd, '-ProjectName', projectName]
     } else if (action === 'sync-shadow') {
       argv = ['-Action', 'sync-shadow', '-Root', cwd]
     }

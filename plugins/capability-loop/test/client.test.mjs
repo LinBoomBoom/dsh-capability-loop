@@ -322,7 +322,7 @@ test('有已接入工程 → 渲染档位/阶段/门禁/阻断/下一步，且�
   assert.match(text, /E:\/proj-b\/\.dsh\/loop\/state\.json/)
   // 工程归属：工程条 + 每张卡片都带工程名 chip，单工程也能看出阻断属于谁
   assert.match(text, /工程 气量平衡月表 E:\/proj-b/, '工程条显示名称与路径')
-  assert.match(text, /只列已接入工程/, '单工程时说明接入范围')
+  assert.match(text, /列出全部有会话的工作区/, '单工程时说明列出范围')
   assert.match(text, /阻断与下一步 气量平衡月表/, '阻断卡片带工程名')
   assert.match(text, /门禁与证据 气量平衡月表/, '门禁卡片带工程名')
   assert.match(text, /运行中心 气量平衡月表/, '运行中心卡片带工程名')
@@ -345,7 +345,7 @@ test('多个工作区 → 每个工作区各用自己的会话读取，并给出
     files,
   })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /已接入工程/, '多工程时应有切换器')
+  assert.match(text, /可用工作区/, '多工程时应有切换器')
   assert.match(text, /proj-a/)
   assert.ok(calls.some((c) => c.sessionId === 'sa') && calls.some((c) => c.sessionId === 'sb'))
 })
@@ -367,7 +367,7 @@ test('多工程：切换工程会重读该工程状态，内容跟着换', async
   })
   let tree = await react.render(page, {})
   let text = collectText(tree).join(' ')
-  assert.match(text, /已接入工程 2 个/)
+  assert.match(text, /共 2 个可用工作区/)
   assert.match(text, /阻断与下一步 proj-a/, '默认选中最近会话的工程（proj-a）')
   assert.match(text, /D-09 A 工程的阻断/)
 
@@ -385,34 +385,48 @@ test('多工程：切换工程会重读该工程状态，内容跟着换', async
   assert.doesNotMatch(text, /D-09 A 工程的阻断/)
 })
 
-test('没有已接入工程 → 空态（显示接入命令）', async () => {
+test('未接入的工作区 → 仍列在下拉里并给一键接入（不再被过滤掉）', async () => {
   const react = createReactStub()
   const { page } = mount(react, { sessions: [session('s1', 'E:/proj-x', 1000)], files: {} })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /还没有已接入的工程/)
-  assert.match(text, /loop-state\.ps1 -Action init/)
+  assert.match(text, /尚未接入治理闭环/, '未接入的要显示接入引导')
+  assert.match(text, /接入这个工作区（影子档）/, '要有接入按钮')
+  assert.match(text, /E:\/proj-x/, '下拉/路径里能看到该工作区')
+})
+
+test('全部工作区都未接入 → 每个都列出来（不被过滤）', async () => {
+  const react = createReactStub()
+  const { page } = mount(react, {
+    sessions: [session('sa', 'E:/proj-a', 3000), session('sb', 'E:/proj-b', 2000), session('sc', 'E:/proj-c', 1000)],
+    files: {},
+  })
+  const text = collectText(await react.render(page, {})).join(' ')
+  assert.match(text, /共 3 个可用工作区/)
+  assert.match(text, /proj-a/)
+  assert.match(text, /proj-b/)
+  assert.match(text, /proj-c/)
 })
 
 test('会话列表为空 → 空态 + 诊断说明需要会话', async () => {
   const react = createReactStub()
   const { page } = mount(react, { sessions: [] })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /还没有已接入的工程/)
-  assert.match(text, /还没有任何会话/)
+  assert.match(text, /没有可用|尚未接入|还没有可用的工作区会话/)
+  assert.match(text, /还没有可用的工作区会话/)
 })
 
 test('session.list 抛错 → 空态不崩', async () => {
   const react = createReactStub()
   const { page } = mount(react, { listThrows: true })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /还没有已接入的工程/)
+  assert.match(text, /没有可用|尚未接入|还没有可用的工作区会话/)
 })
 
 test('workspaceFiles.read 抛错 → 空态不崩', async () => {
   const react = createReactStub()
   const { page } = mount(react, { sessions: [session('s1', 'E:/proj-y', 1)], readThrows: true })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /还没有已接入的工程/)
+  assert.match(text, /没有可用|尚未接入|还没有可用的工作区会话/)
 })
 
 test('无 remote 服务 → 空态 + 诊断（不抛错）', async () => {
@@ -424,7 +438,7 @@ test('无 remote 服务 → 空态 + 诊断（不抛错）', async () => {
     slots: { inject(owner, cb) { cb() }, register(options, component) { if (options.name === 'main') page = component } },
   })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /还没有已接入的工程/)
+  assert.match(text, /没有可用|尚未接入|还没有可用的工作区会话/)
 })
 
 // ---------------- 运行中心（P2 动作） ----------------
