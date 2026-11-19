@@ -106,6 +106,21 @@
 **ERR-20261112-19 · ConvertFrom-Json 大对象失败**
 修法：用 Node/Python 解析；或 `-Depth` 增加；不要整文件打印。
 
+**ERR-20261119-01 · 本机目录装的 bundle 顶层 `import '@deepseek-ai/dsh-*'` 整行不激活**
+现象：`plugin_manager action=install_bundle target=<本地目录>` 返回 `packageResult.exitCode=0`，但 `application: failed`，诊断
+`dsh: warning: 1 entry did not activate — failed to import: Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-llm' imported from <工作区>\plugins\<pkg>\index.js`。
+根因：本地目录安装走 **pnpm link（junction）**，插件真实路径在工作区；Node 从真实路径向上找 `node_modules`，永远到不了 profile 的 `node_modules`（dsh 自带包在那里）。只有从 npm/Git 装进 profile 的包才能顶层直接 import dsh 包。
+修法（二选一）：
+1. **不要顶层 import**——在 `apply()` 或首次使用时 `await import('@deepseek-ai/dsh-llm')`，失败则用手工构造兜底（`UserMessage` 就是 `{ id, role:'user', content, source }`，形状见 `dsh-session/src/repair.ts` L168）。本 skill 的 P1 插件用这条。
+2. 把包发布到 npm/ClawHub 再装进 profile（能解析 dsh 包），但更新与调试变慢。
+验证：`plugin_manager action=set_plugin target=include:<row-id> enabled=true` 返回 `application: applied`，才算这一行真的活了。
+
+**ERR-20261119-02 · 插件用 `ctx.fs.writeText` 写文件静默失败（注入成功但没落盘）**
+现象：插件逻辑跑通了（会话里能看到注入内容），但目标文件没更新、也没报错。
+根因：`dsh-fs-sandbox` 的 `checkedTarget` 是 `policy = sandboxPolicy ?? ctx.sandboxPolicy.resolve()`——不传 per-call 策略时用**部署默认**（fail-safe 是 `read-only`），于是写入被 `FS_SANDBOX_DENIED` 拒绝；插件若 `try/catch` 里只吞掉异常，就完全静默。
+修法：写入时显式传**本会话自己的**策略：`ctx.sandboxPolicy.resolve({ session })` 作为 `writeText` 第 5 个参数；并**不要静默 catch**，至少 `logger.warn` 一条。只读会话里写入被拒是正确行为（尊重用户沙箱），降级即可。
+验证：改完看目标文件是否出现当前 session id；`read-only` 会话下应 warn 且不落盘。
+
 ## E. 交接与协作
 
 **ERR-20261112-20 · Trae 自判 PASS / 改需求**

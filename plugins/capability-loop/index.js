@@ -19,11 +19,15 @@
  *   - `agent/pre-step` 瀑布签名：`@deepseek-ai/dsh-agent/src/runtime-types.ts` L351
  *   - `decision.messages` 折叠方式：`@deepseek-ai/dsh-agent-instructions/src/index.ts` L330-356
  *   - `createUserMessage`：`@deepseek-ai/dsh-llm/src/message.ts` L246（`MessageSourceMap` 为 merge-extensible，未知 kind 消费者降级）
+ *   - 手工构造 UserMessage 的先例（无需导入）：`@deepseek-ai/dsh-session/src/repair.ts` L168
  *   - `ctx.workingDirectory.ensure(agent, signal)`：`dsh-working-directory/src/index.ts` L192
  *   - `ctx.fs.resolve/stat/readText/writeText`：`dsh-fs/src/index.ts` L149/L198/L222/L283
+ *
+ * 为什么**不**在模块顶层 `import '@deepseek-ai/dsh-llm'`：本机目录安装（`install_bundle` 走
+ * pnpm link）时，插件的真实路径在工作区，Node 解析不会走到 profile 的 node_modules，
+ * 顶层 import 会 `ERR_MODULE_NOT_FOUND` 导致整行不激活。改为运行时动态解析 + 手工构造兜底：
+ * 能解析就用官方 `createUserMessage`，解析不到就按 `repair.ts` 同款形状手工构造。
  */
-
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'capability-loop-takeover'
 
@@ -64,6 +68,38 @@ function clip(text, max) {
   const limit = typeof max === 'number' && max > 0 ? max : 0
   if (limit === 0 || text.length <= limit) return text
   return text.slice(0, Math.max(0, limit - 12)) + '…（已截断）'
+}
+
+/** 手工构造 UserMessage（形状与 `dsh-session/src/repair.ts` 的合成消息一致）。 */
+let fallbackSeq = 0
+function manualUserMessage(input) {
+  fallbackSeq += 1
+  return Object.freeze({
+    id: 'capability-loop-' + fallbackSeq + '-' + Date.now().toString(36),
+    role: 'user',
+    content: input.content,
+    source: input.source,
+  })
+}
+
+/**
+ * 解析「造 UserMessage」的实现：优先官方 `createUserMessage`，解析不到就用手工构造。
+ * 只在第一次注入时尝试一次；结果缓存（成功/失败都缓存，避免每步重复失败）。
+ */
+let messageFactory
+async function resolveMessageFactory(warn) {
+  if (messageFactory !== undefined) return messageFactory
+  try {
+    const mod = await import('@deepseek-ai/dsh-llm')
+    if (mod !== null && mod !== undefined && typeof mod.createUserMessage === 'function') {
+      messageFactory = mod.createUserMessage
+      return messageFactory
+    }
+  } catch (error) {
+    warn('无法解析 @deepseek-ai/dsh-llm，回退为手工构造 UserMessage', error)
+  }
+  messageFactory = manualUserMessage
+  return messageFactory
 }
 
 /** 轻量指纹：只用于「同内容不重复注入」，不作安全用途。 */
@@ -237,10 +273,11 @@ function inBatch(messages, digest) {
 }
 
 /** 记录影子观察：每个会话一行，供 `loop-state.ps1 -Action sync-shadow` 计数。尽力而为。 */
-async function logShadowSession(ctx, cwd, agent, signal) {
+async function logShadowSession(ctx, cwd, agent, signal, warn) {
   const fsService = ctx.get('fs')
   if (fsService === undefined) return
-  const header = agent !== null && agent !== undefined && agent.session !== undefined ? agent.session.header : undefined
+  const session = agent !== null && agent !== undefined ? agent.session : undefined
+  const header = session !== undefined && session !== null ? session.header : undefined
   const sessionId = header !== undefined && header !== null ? String(header.id) : ''
   if (sessionId === '') return
   try {
@@ -257,9 +294,21 @@ async function logShadowSession(ctx, cwd, agent, signal) {
     if (existing.indexOf(sessionId) !== -1) return
     const line = JSON.stringify({ session: sessionId, at: new Date().toISOString() }) + '\n'
     // writeText(target, content, expected?, signal?, sandboxPolicy?)
-    await fsService.writeText(target, existing + line, undefined, signal)
-  } catch {
-    // 影子日志是尽力而为，失败不影响注入
+    // 传**本会话自己的**沙箱策略：read-only 会话里写入会被拒（我们只 warn 不阻断，尊重用户沙箱），
+    // workspace-write 会话里目标在工程内即可写，danger-full-access 不限制。
+    let policy
+    const policyService = ctx.get('sandboxPolicy')
+    if (policyService !== undefined && policyService !== null && typeof policyService.resolve === 'function') {
+      try {
+        policy = policyService.resolve({ session })
+      } catch {
+        policy = undefined
+      }
+    }
+    await fsService.writeText(target, existing + line, undefined, signal, policy)
+  } catch (error) {
+    // 影子日志是尽力而为：失败不影响注入，但要留日志便于排查（曾因静默吞错导致「注入成功但没记账」）。
+    if (typeof warn === 'function') warn('影子日志写入失败（不影响注入）', error)
   }
 }
 
@@ -305,7 +354,7 @@ export function apply(ctx, config) {
     if (mode === 'off') return { mode, text: null, cwd, state }
 
     if (mode === 'shadow') {
-      if (cfg.shadowLog) await logShadowSession(ctx, cwd, agent, signal)
+      if (cfg.shadowLog) await logShadowSession(ctx, cwd, agent, signal, warn)
       return { mode, text: buildShadowNotice(state, cfg), cwd, state }
     }
     return { mode, text: buildContract(state, project, cfg, skillDir), cwd, state }
@@ -328,7 +377,8 @@ export function apply(ctx, config) {
         return decision
       }
 
-      const message = createUserMessage({
+      const make = await resolveMessageFactory(warn)
+      const message = make({
         content: [{ type: 'text', text: composed.text }],
         source: {
           kind: SOURCE_KIND,

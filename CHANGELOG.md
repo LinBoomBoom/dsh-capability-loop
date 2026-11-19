@@ -2,6 +2,33 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.11.1 — 2026-11-19（PATCH：修「装了但没生效」的两个真缺陷）
+
+**起因**：按 v2.11.0 的指引实际安装 P1 插件，`install_bundle` 返回 `exitCode=0` 但 `application: failed`，诊断 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-llm'`——整行没激活。修好后注入正常，但又发现「注入成功、影子日志没记账」。
+
+**修 1：本地目录安装的 bundle 顶层 import dsh 包会整行不激活**
+- 根因：本地目录安装走 pnpm **link（junction）**，插件真实路径在工作区；Node 从真实路径向上找 `node_modules`，到不了 profile 的 `node_modules`（dsh 自带包在那里）。只有从 npm/Git 装进 profile 的包才能顶层直接 import。
+- 修法：`index.js` 去掉顶层 `import '@deepseek-ai/dsh-llm'`，改**运行时动态解析 + 手工构造兜底**——能解析就用官方 `createUserMessage`，解析不到就按 `dsh-session/src/repair.ts` L168 的同款形状手工 `Object.freeze`。
+- 回归：新增 `test/fallback.test.mjs`（沙箱里**不放桩**，强制走兜底），断言仍注入 + 消息形状正确 + 记录降级日志。
+
+**修 2：`ctx.fs.writeText` 未传 per-call 策略时按部署默认 `read-only` 被拒，异常被静默吞掉**
+- 根因：`dsh-fs-sandbox` 的 `checkedTarget` 是 `policy = sandboxPolicy ?? ctx.sandboxPolicy.resolve()`；不传就用**部署默认**（fail-safe `read-only`）→ `FS_SANDBOX_DENIED`；插件原实现在 `catch {}` 里静默吞掉，表现为「注入成功但影子日志不增长」。
+- 修法：写入时传**本会话自己的**策略 `ctx.sandboxPolicy.resolve({ session })` 作为第 5 参；失败改为 `logger.warn`（不再静默）。只读会话里写入被拒是正确行为——尊重用户沙箱，降级不阻断。
+- 证据：修前影子日志只有夹具的 `e2e-1`；修后真机追加 `session-056a88a3-…`，`sync-shadow` 计数 1 → **2/3**。
+
+**文档**
+- `references/70-playbook.md` 新增 `ERR-20261119-01`（link 安装 + 顶层 import dsh 包）与 `ERR-20261119-02`（插件写文件静默失败），含根因、修法、验证方式。
+- `SKILL.md`：P1 状态改为「已在本机 profile 安装并实测注入成功」；版本 2.11.1。
+
+**验证（本轮实测）**
+- `install_bundle` → `application: failed`（复现）；改后 `set_plugin include:capability-loop` → **`application: applied`**。
+- 真机会话里收到影子一行提示（86 字符，`mode: shadow`）；影子日志追加当前 session id；`sync-shadow` 显示「已观察 2 / 3 个会话」。
+- 夹具：`node --test` → **11/11 pass**（含无桩兜底用例）；`node --check` 0 错误。
+
+**未实测**：`on` 档在真实会话里的整段契约（本仓库当前是 `shadow`；把 `.dsh/loop/state.json` 切 `on` 即可验）；Web UI 对 `source.kind='capability-loop'` 的渲染样式；token 计费差异。
+
+**回滚**：`git revert`；或 `plugin_manager action=remove_bundle target=dsh-capability-loop-bundle`；或 `loop-state.ps1 -Action set-mode -Mode off` 单工程关闭。
+
 ## v2.11.0 — 2026-11-18（P1 宿主接管插件：契约自动进首步，不再等模型自觉）
 
 **起因**：v2.10.0 的 P0 是软接管——`AGENTS.md` 链一定注入，但「读 `state.json`」仍靠模型自觉，实测里模型会跳过那次 `read`。要确定性，必须由宿主在首步把契约折进消息。

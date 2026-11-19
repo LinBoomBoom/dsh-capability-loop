@@ -1,6 +1,6 @@
 ---
 name: dsh-capability-loop
-version: 2.11.0
+version: 2.11.1
 description: DSH 能力升级与治理闭环。【重点】体检/修复 DSH 自身：九组审计→检索/桌面壳/Token 死重量修复→门禁验收→经验写回；适用升级/优化/体检 DSH、治理插件与技能、修会话检索或进程退出、降 Token、迭代本 skill。【配套】项目接管（三档+状态源）、接入六问、需求/设计/测试串接、Trae 交接体检（含网关前缀）、grill 自对抗、迁移与上架。单点需求/设计/测试走各自规范。
 ---
 
@@ -42,7 +42,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<skill>\scripts\loop-state.
 
 **状态源 `.dsh/loop/state.json`**：唯一写入方是脚本（`loop-state.ps1` / `loop-gate.ps1` / `capability-audit.ps1`），记录 `mode / stage / next / checks / blockers / metrics / digest`；`loop-gate` 与 `capability-audit` 在**已标记工程**上自动写回，未标记工程零变化。面板（P2，设计稿 `docs/design/2026-11-18-capability-loop-panel.md`）只读它。
 
-**P0 / P1 / P2**：P0 = `AGENTS.md` 12 行片段（`templates/agents-loop-fragment.md`，**今天可用**，软接管）；P1 = 宿主插件 `plugins/capability-loop/` 在 `agent/pre-step` 折入契约（**已实现，夹具 10/10**，需 `install_bundle` 安装，未在真实会话实测）；P2 = Web 面板（7 Tab / 32 项能力，仅设计稿）。
+**P0 / P1 / P2**：P0 = `AGENTS.md` 12 行片段（`templates/agents-loop-fragment.md`，**今天可用**，软接管）；P1 = 宿主插件 `plugins/capability-loop/` 在 `agent/pre-step` 折入契约（**已实现，夹具 11/11**；**已在本机 profile 安装并实测注入成功**：`install_bundle` + `set_plugin` → `application: applied`，会话里收到影子提示、影子日志记账）；P2 = Web 面板（7 Tab / 32 项能力，仅设计稿）。
 
 ## 2. 七阶段闭环（按需取段，不强行走完）
 

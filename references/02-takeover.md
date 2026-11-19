@@ -30,7 +30,7 @@ P1 的机制依据：`@deepseek-ai/dsh-agent-instructions` 就是用 `agent/pre-
 
 | 项 | 内容 |
 |---|---|
-| 入口 | `index.js`（host half，ESM）；`inject = ['fs', 'workingDirectory']` |
+| 入口 | `index.js`（host half，ESM）；`inject = ['fs', 'workingDirectory']`；`sandboxPolicy` 用 `ctx.get()` 可选取 |
 | 钩子 | `agent/pre-step` 瀑布：先 `await next()`，再决定是否折入消息 |
 | 档位 | `.dsh/loop/project.json` 的 `mode` → 被 `state.json` 的 `mode` 覆盖 → 缺省用插件 `defaultMode`（默认 `off`） |
 | 注入 | `on`：完整契约 ≤1600 字符（实测约 810）；`shadow`：一行 ≤140 字符；`off`/未标记：0 |
@@ -47,13 +47,19 @@ plugin_manager  action=install_bundle  target="<skill>\plugins\capability-loop"
 
 装完在 **Plugins** 页打开该行，然后在**新会话**验证：`on` 档首条消息后应出现契约，`shadow` 档是一行提示。
 
+> **两个已验证的坑**（见 `70-playbook.md` `ERR-20261119-01/02`）：①本地目录安装是 pnpm link，**不能在模块顶层 import dsh 自带包**（会 `ERR_MODULE_NOT_FOUND` 导致整行不激活）——本插件改运行时动态解析 + 手工构造兜底；②插件写文件必须传**本会话**的 `sandboxPolicy.resolve({ session })`，否则按部署默认 `read-only` 被拒且容易静默失败。
+
+> 装完必须确认 `plugin_manager action=set_plugin target=include:capability-loop enabled=true` 返回 **`application: applied`**；`install_bundle` 的 `exitCode=0` 不代表这一行活了。
+
 **回归夹具**（10 条，`node --test`）：
 
 ```powershell
 node --test "<skill>\plugins\capability-loop\test\takeover.test.mjs"
 ```
 
-覆盖：未标记零注入 / off 不注入 / shadow 一行 + 影子日志 + 同会话只记一次 / on 契约含阶段·门禁·阻断·下一步且 ≤1600 / 注入紧跟用户消息 / resume 历史去重 / 同批去重 / fs 抛错 fail-open / state 坏 JSON 降级 / `defaultMode=on` 但未标记仍不注入。
+覆盖：未标记零注入 / off 不注入 / shadow 一行 + 影子日志 + 同会话只记一次 / on 契约含阶段·门禁·阻断·下一步且 ≤1600 / 注入紧跟用户消息 / resume 历史去重 / 同批去重 / fs 抛错 fail-open / state 坏 JSON 降级 / `defaultMode=on` 但未标记仍不注入 / **无 dsh-llm 可解析时的兜底路径**（11 条）。
+
+**本机实测（2026-11-19）**：`install_bundle` → `application: applied`；真机会话收到 86 字符影子提示；影子日志追加真实 session id；`sync-shadow` 显示 2/3。`on` 档真实会话未实测（把 `state.json` 切 `on` 即可）。
 
 ## 3. 档位：off / shadow / on
 
