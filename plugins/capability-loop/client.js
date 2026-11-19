@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
       },
       dotsep: { color: 'var(--dsw-alias-label-caption)' },
       kpis: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginTop: 18 },
+      kpisCompact: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 18 },
       kpi: {
         background: 'var(--dsw-alias-card-fill)', border: '1px solid var(--dsw-alias-border-l1)',
         borderRadius: 'var(--dsw-radius-md)', padding: '11px 14px', minHeight: 68,
@@ -63,7 +64,7 @@ window.__ModuleLoader__.load({
       },
       cardHd: {
         display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px 9px',
-        fontSize: 13, fontWeight: 600,
+        fontSize: 13, fontWeight: 600, flexWrap: 'wrap',
       },
       hint: { marginLeft: 'auto', fontSize: 11, fontWeight: 400, color: 'var(--dsw-alias-label-caption)' },
       row: {
@@ -152,7 +153,7 @@ window.__ModuleLoader__.load({
       projectBar: {
         display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, padding: '8px 12px',
         border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8,
-        background: 'var(--dsw-alias-bg-layer-1)', fontSize: 12,
+        background: 'var(--dsw-alias-bg-layer-1)', fontSize: 12, flexWrap: 'wrap',
       },
       projectTag: { color: 'var(--dsw-alias-label-caption)', fontSize: 11, flex: 'none' },
       projectPath: {
@@ -572,6 +573,7 @@ window.__ModuleLoader__.load({
       const f = props.fields === undefined || props.fields === null ? {} : props.fields
       const disabled = props.sessionId === '' || props.sessionId === undefined
       const set = props.setField
+      const labelStyle = props.compact === true ? { ...S.name, width: 72 } : S.name
       const runBtn = (key, label, extra) => h('button', {
         type: 'button',
         style: { ...S.btn, ...(extra !== undefined && extra.primary === true ? S.btnPrimary : {}) },
@@ -589,7 +591,7 @@ window.__ModuleLoader__.load({
           h('span', { style: S.hint },
             disabled ? '没有可用会话：动作需要会话凭据' : '动作 = 会话命令 /capability-loop（确认后运行）')),
         h('div', { style: S.runRow },
-          h('span', { style: S.name }, '门禁'),
+          h('span', { style: labelStyle }, '门禁'),
           h('select', {
             style: S.select, value: f.gateKind || 'design', disabled,
             onChange: (event) => set('gateKind', event.target.value),
@@ -619,14 +621,14 @@ window.__ModuleLoader__.load({
             : null,
         ),
         h('div', { style: S.runRow },
-          h('span', { style: S.name }, '交接体检'),
+          h('span', { style: labelStyle }, '交接体检'),
           h('input', {
             style: S.input, placeholder: 'slug（必填）', disabled, value: f.slug || '',
             onChange: (event) => set('slug', event.target.value),
             onKeyDown: enter('handoff', String(f.slug || '').trim() !== ''),
           }),
           runBtn('handoff', '运行', { disabled: String(f.slug || '').trim() === '' }),
-          h('span', { style: { ...S.name, width: 'auto', marginLeft: 10 } }, '模块预检'),
+          h('span', { style: { ...labelStyle, width: 'auto', marginLeft: 10 } }, '模块预检'),
           h('input', {
             style: S.input, placeholder: 'keyword（必填）', disabled, value: f.keyword || '',
             onChange: (event) => set('keyword', event.target.value),
@@ -639,14 +641,14 @@ window.__ModuleLoader__.load({
           runBtn('preflight', '运行', { disabled: String(f.keyword || '').trim() === '' }),
         ),
         h('div', { style: S.runRow },
-          h('span', { style: S.name }, '上架打包'),
+          h('span', { style: labelStyle }, '上架打包'),
           h('input', {
             style: S.input, placeholder: 'handle（必填）', disabled, value: f.handle || '',
             onChange: (event) => set('handle', event.target.value),
             onKeyDown: enter('pack', String(f.handle || '').trim() !== ''),
           }),
           runBtn('pack', '运行', { disabled: String(f.handle || '').trim() === '' }),
-          h('span', { style: { ...S.name, width: 'auto', marginLeft: 10 } }, '只读动作'),
+          h('span', { style: { ...labelStyle, width: 'auto', marginLeft: 10 } }, '只读动作'),
           runBtn('audit', '能力体检'),
           runBtn('visual', '视觉探测'),
           runBtn('skill-status', '版本检查'),
@@ -756,7 +758,9 @@ window.__ModuleLoader__.load({
         { k: '档位', v: modeText, m: modeMeta, id: 'mode' },
         { k: '当前阶段', v: info.stage, m: '第 ' + (info.index + 1) + ' / 7 阶段', id: 'stage' },
         { k: '门禁', v: tally.pass + ' / ' + checks.length + ' 通过', m: tally.warn + ' WARN · ' + tally.fail + ' FAIL · ' + tally.missing + ' 未运行', id: 'gate' },
-        { k: '阻断', v: String(blockers.length) + ' 项', m: blockers.length > 0 ? blockers.slice(0, 2).map((b) => b.id + ' ' + b.text).join(' · ') : '无阻断', id: 'blocker' },
+        { k: '阻断', v: String(blockers.length) + ' 项', m: blockers.length > 0
+          ? blockers.slice(0, 1).map((b) => b.id + ' ' + b.text).join('') + (blockers.length > 1 ? ' 等 ' + blockers.length + ' 项' : '')
+          : '无阻断', id: 'blocker' },
       ]
 
       return h('div', null,
@@ -802,7 +806,7 @@ window.__ModuleLoader__.load({
                 ? '已接入工程 ' + props.projects.length + ' 个 · 切换后重读该工程状态'
                 : '只列已接入工程；未接入的跑 init 后出现'),
           ),
-          h('div', { style: S.kpis },
+          h('div', { style: props.compact === true ? S.kpisCompact : S.kpis },
             kpis.map((kpi) => h('div', { key: kpi.id, style: S.kpi },
               h('span', { style: S.kpiK }, kpi.k),
               h('span', { style: S.kpiV }, kpi.v),
@@ -814,6 +818,7 @@ window.__ModuleLoader__.load({
             setField: props.setField,
             sessionId: props.sessionId,
             projectName: name,
+            compact: props.compact === true,
             onRequest: props.onRequest,
           }),
         ),
@@ -918,6 +923,8 @@ window.__ModuleLoader__.load({
       const [running, setRunning] = React.useState(null)
       const [result, setResult] = React.useState(null)
       const [copied, setCopied] = React.useState(null)
+      const [viewport, setViewport] = React.useState(() => (typeof window !== 'undefined' && typeof window.innerWidth === 'number' ? window.innerWidth : 1024))
+      const pageStyle = viewport < 820 ? { ...S.page, padding: '18px 16px 32px' } : S.page
       const load = React.useCallback(() => {
         setView((prev) => ({ ...prev, status: 'loading' }))
         const source = services
@@ -931,6 +938,14 @@ window.__ModuleLoader__.load({
         )
       }, [services])
       React.useEffect(() => { load() }, [load])
+
+      // 窄窗口（<820px）用紧凑排版：KPI 2 列、标签变窄、工程条换行
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined
+        const onResize = () => setViewport(typeof window.innerWidth === 'number' ? window.innerWidth : 1024)
+        window.addEventListener('resize', onResize)
+        return () => window.removeEventListener('resize', onResize)
+      }, [])
 
       // 确认框：ESC 关闭 + Tab 焦点陷阱 + 打开时把焦点放到「确认运行」
       React.useEffect(() => {
@@ -1055,22 +1070,22 @@ window.__ModuleLoader__.load({
       }
 
       if (view.status === 'loading' && view.projects.length === 0) {
-        return h('div', { style: S.page }, h('div', { style: S.inner },
+        return h('div', { style: pageStyle }, h('div', { style: S.inner },
           h('h1', { style: S.h1 }, '能力闭环'),
           h('p', { style: S.sub }, h('span', null, '读取状态中…')),
         ))
       }
       if (view.status === 'error') {
-        return h('div', { style: S.page }, h('div', { style: S.inner },
+        return h('div', { style: pageStyle }, h('div', { style: S.inner },
           h('h1', { style: S.h1 }, '能力闭环'),
           h('p', { style: S.sub }, h('span', null, '读取失败：' + view.error)),
           h('button', { style: S.btn, onClick: load, type: 'button' }, '重试'),
         ))
       }
       if (view.projects.length === 0) {
-        return h('div', { style: S.page }, h('div', { style: S.inner }, h(EmptyView, { onRefresh: load, diagnostic: lastDiagnostic })))
+        return h('div', { style: pageStyle }, h('div', { style: S.inner }, h(EmptyView, { onRefresh: load, diagnostic: lastDiagnostic })))
       }
-      return h('div', { style: S.page }, h('div', { style: S.inner },
+      return h('div', { style: pageStyle }, h('div', { style: S.inner },
         h(ProjectView, {
           project: current.project,
           state: current.state,
@@ -1082,6 +1097,7 @@ window.__ModuleLoader__.load({
           onRequest: requestAction,
           projects: view.projects,
           selectedIndex: currentIndex,
+          compact: viewport < 820,
           onSelect: (index) => {
             const picked = view.projects[index]
             const path = picked !== undefined && picked.workspace !== undefined ? picked.workspace.path : ''

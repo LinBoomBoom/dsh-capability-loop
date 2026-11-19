@@ -42,6 +42,7 @@
 | R6 | 阻断/门禁看不出属于哪个工程；多工程时不确定切换是否换内容（用户反馈） | 工程名只在页头副标题出现一次；卡片标题无归属；切换只改索引、用的是载入时的快照 | 工程条（下拉 + 路径 + 数量）；四张卡片统一工程名 chip；切换时 `setSelected + load()` 重读 | client 16/16（卡头归属、切换后重读、旧阻断消失） |
 | R7 | 自查：中文/空格 taskDir 被静默丢弃；无会话 cwd 回退应用目录会跑错工程；门禁空 taskDir 只回 WARN；动作后工程重排导致选中跳；取消后迟到结果覆盖；PS 脚本缺 BOM（本轮真复现） | `safeToken` 限 ASCII；`cwdOf` 回退 `process.cwd()`；面板没校验 taskDir；选中用索引；取消只清空 controller；编辑剥掉 BOM | `safePath`+引号解析；handler 无 cwd 明确报错；门禁禁用+env 动作；按路径选中并持久化；settle 归属判断；审计/打包新增 BOM 硬门 | actions 21、client 18、takeover 14、fallback 1（54/54）；中文+空格路径真机 PASS；package BOM 10/10 |
 | R8 | 可达性缺口：确认框无 ESC/焦点陷阱（D5 一直挂）；结果只能看不能带走（命令/输出不可复制） | 组件无 hooks 设计导致没做键盘逻辑；没有复制入口 | 页级 useEffect：Esc 关闭 + Tab 循环 + 初始焦点；复制按钮（Clipboard API + 降级 + 已复制反馈）；React 桩支持 deps 以测 Esc | client 21/21（含 Esc、复制命令/输出）；`node --check` 0 |
+| R9 | 768 宽截图：KPI 4 列压扁、阻断文字挤成一段；请求 375 实际只到 536（桌面壳 minWidth） | 固定 4 列 KPI / 112px 标签 / 40px padding；Electron 窗口最小宽度 536 | `<820px` 紧凑排版（KPI 2 列、标签 72、padding 18/16、卡头换行、阻断 KPI 只显示首条）；截图脚本打印**实际**尺寸并标注 375 需 Web UI | `panel-768.png` 真机截图；`panel-375.png` 实际 536×900；client 21/21 |
 
 ## 4. 结论
 
