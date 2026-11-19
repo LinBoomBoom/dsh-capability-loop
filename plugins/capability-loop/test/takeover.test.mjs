@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN_SRC = path.resolve(HERE, '..', 'index.js')
+const ACTIONS_SRC = path.resolve(HERE, '..', 'actions.js')
 
 /** 搭临时沙箱：<tmp>/plugin/index.js + <tmp>/node_modules/@deepseek-ai/dsh-llm（桩）。 */
 function makeSandbox() {
@@ -21,6 +22,8 @@ function makeSandbox() {
   const pluginDir = path.join(root, 'plugin')
   fs.mkdirSync(pluginDir, { recursive: true })
   fs.copyFileSync(PLUGIN_SRC, path.join(pluginDir, 'index.js'))
+  // index.js 现在静态 import './actions.js'，夹具要一并拷进去
+  fs.copyFileSync(ACTIONS_SRC, path.join(pluginDir, 'actions.js'))
   fs.writeFileSync(path.join(pluginDir, 'package.json'), JSON.stringify({ type: 'module' }))
 
   const stubDir = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-llm')
@@ -81,12 +84,22 @@ function makeCtx(cwd, fsOverride) {
     },
   }
   const handlers = new Map()
+  const registered = []
   return {
     handlers,
+    registered,
     get: (key) => (key === 'fs' ? fsService : undefined),
     workingDirectory: { ensure: async () => cwd },
     logger: { info() {}, warn() {} },
     on: (event, handler) => { handlers.set(event, handler) },
+    // 真实 ctx 一定有 inject；命令注册会在这里被收集，便于夹具断言。
+    inject: (keys, cb) => {
+      const scoped = {
+        effect: (fn) => { fn() },
+        commands: { register: (definition) => registered.push(definition) },
+      }
+      cb(scoped)
+    },
   }
 }
 
@@ -266,4 +279,45 @@ test('未标记但有 defaultMode=on：仍不注入（标记是前提）', async
   apply(ctx, { defaultMode: 'on' })
   const out = await preStep(ctx, makeAgent())
   assert.equal(ours(out).length, 0)
+})
+
+// ---------------- 命令通道（面板动作的 Host 半边） ----------------
+
+test('命令通道：注册 capability-loop，带输入提示', async () => {
+  const ctx = makeCtx(makeWorkspace({}))
+  apply(ctx, {})
+  assert.equal(ctx.registered.length, 1, '只注册一个会话命令')
+  const definition = ctx.registered[0]
+  assert.equal(definition.name, 'capability-loop')
+  assert.match(definition.description, /门禁/)
+  assert.match(definition.input.hint, /run gate/)
+})
+
+test('命令通道：空输入给用法；未知动作、缺 subprocess 都回 error 文本', async () => {
+  const ctx = makeCtx(makeWorkspace({}))
+  apply(ctx, {})
+  const definition = ctx.registered[0]
+
+  const usage = await definition.handler({ agent: makeAgent(), rawInput: '' })
+  assert.equal(usage.kind, 'success')
+  assert.match(usage.text, /用法/)
+
+  const unknown = await definition.handler({ agent: makeAgent(), rawInput: 'rm -rf /' })
+  assert.equal(unknown.kind, 'error')
+  assert.match(unknown.text, /未知动作/)
+
+  const noSubprocess = await definition.handler({ agent: makeAgent(), rawInput: 'run audit' })
+  assert.equal(noSubprocess.kind, 'error')
+  assert.match(noSubprocess.text, /ctx\.subprocess/)
+})
+
+test('命令通道：aborted 信号回「已取消」', async () => {
+  const ctx = makeCtx(makeWorkspace({}))
+  apply(ctx, {})
+  const definition = ctx.registered[0]
+  const controller = new AbortController()
+  controller.abort()
+  const out = await definition.handler({ agent: makeAgent(), rawInput: 'run audit', signal: controller.signal })
+  assert.equal(out.kind, 'error')
+  assert.match(out.text, /已取消/)
 })

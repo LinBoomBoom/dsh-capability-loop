@@ -136,9 +136,22 @@ if ($agentFiles.Count -gt 0) {
 }
 
 # ---------------- D. profile 配置 ----------------
-$profileDir = Join-Path $DshHome 'profiles\web'
+# 活动 profile 不一定是 web（桌面版是 desktop）。优先 desktop → web → 第一个非 default 目录。
+$profilesDir = Join-Path $DshHome 'profiles'
+$profileDir = Join-Path $profilesDir 'desktop'
+if (-not (Test-Path -LiteralPath $profileDir)) { $profileDir = Join-Path $profilesDir 'web' }
+if (-not (Test-Path -LiteralPath $profileDir)) {
+    $candidates = @()
+    if (Test-Path -LiteralPath $profilesDir) {
+        $candidates = @(Get-ChildItem -LiteralPath $profilesDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'default' } | Sort-Object Name)
+    }
+    if ($candidates.Count -gt 0) { $profileDir = $candidates[0].FullName }
+}
+$profileName = Split-Path -Leaf $profileDir
 $patch = Join-Path $profileDir 'cordis.patch.yml'
 if (Test-Path -LiteralPath $patch) {
+    Add-R 'D profile' '活动 profile' 'PASS' ($profileName + '（cordis.patch.yml）')
     $pt = Read-Utf8 $patch
     $lines = $pt -split "`r?`n"
     $openAt = ''
@@ -167,7 +180,11 @@ if (Test-Path -LiteralPath $patch) {
     if ($dm.Count -gt 0) { Add-R 'D profile' 'dshmarket 残留' 'WARN' ([string]$dm.Count + ' 行有效引用（自重启会抢端口）') } else { Add-R 'D profile' 'dshmarket 残留' 'PASS' '无有效引用' }
     Add-R 'D profile' 'patch 行数' 'PASS' ([string]$lines.Count)
 } else {
-    Add-R 'D profile' 'cordis.patch.yml' 'FAIL' ('不存在：' + $patch)
+    if (Test-Path -LiteralPath $profileDir) {
+        Add-R 'D profile' 'cordis.patch.yml' 'WARN' ('profile ' + $profileName + ' 无 cordis.patch.yml（patch 可选；检索三件套无法核对）')
+    } else {
+        Add-R 'D profile' 'profile 目录' 'FAIL' ('不存在：' + $profilesDir)
+    }
 }
 
 foreach ($pkg in @('dsh-token-insights', 'dshmarket')) {

@@ -22,7 +22,7 @@
 |---|---|---|---|---|
 | **P0 软接管**（本文件 + 模板） | `AGENTS.md` 12 行片段 + `.dsh/loop/state.json` | 中：`AGENTS.md` 链**一定注入**，但「读 state」靠模型照做 | 0 安装 | 今天就能用 |
 | **P1 硬接管（已实现，夹具验证）** | 宿主插件 `plugins/capability-loop/`：在 `agent/pre-step` 把契约折进该步消息 | 高：首步必带，不依赖模型自觉 | 需装 bundle | 装了插件之后 |
-| **P2 面板**（未实现） | `sidebar.panellist` + `main` 全局页 | 高：状态可见可控 | 需要客户端半 | 想让人看见时 |
+| **P2 面板（v1 已实现）** | 同一个 bundle 的 client 半：`sidebar.panellist` + `main` 全局页 + **运行中心**（动作走会话命令 `/capability-loop`） | 高：状态可见、可动手 | 需 client 半 + host 命令 | 想让人看见/操作时 |
 
 P1 的机制依据：`@deepseek-ai/dsh-agent-instructions` 就是用 `agent/pre-step` 在首个请求前注入 `AGENTS.md` 链（源码 `src/index.ts` L330–356）；插件照同样方式把契约插进 `decision.messages`，不用 `agent.inject()`（后者要等唤醒，且可能错过已认领批次的 pre-step）。
 
@@ -59,7 +59,16 @@ node --test "<skill>\plugins\capability-loop\test\takeover.test.mjs"
 
 覆盖：未标记零注入 / off 不注入 / shadow 一行 + 影子日志 + 同会话只记一次 / on 契约含阶段·门禁·阻断·下一步且 ≤1600 / 注入紧跟用户消息 / resume 历史去重 / 同批去重 / fs 抛错 fail-open / state 坏 JSON 降级 / `defaultMode=on` 但未标记仍不注入 / **无 dsh-llm 可解析时的兜底路径**（11 条）。
 
-**本机实测（2026-11-19）**：`install_bundle` → `application: applied`；真机会话收到 86 字符影子提示；影子日志追加真实 session id；`sync-shadow` 显示 2/3。`on` 档真实会话未实测（把 `state.json` 切 `on` 即可）。
+**本机实测（2026-11-19）**：`install_bundle` → `application: applied`；`shadow` 真机会话收到一行提示并记账；`sync-shadow` 显示 2/3。**`on` 档已实测**：`loop-state.ps1 -Action set-mode -Mode on` 后，本工程真实会话的下一步即收到完整契约（阶段 / 硬约束 / 门禁 / 阻断 / 下一步全文，约 900 字符），脚本返回 `[PASS] set-mode … on`、exit 0。
+
+### 2.2 运行中心（P2 动作，v2.13.0）
+
+- 入口：面板「运行中心」卡片（门禁 kind + taskDir / 交接体检 slug / 模块预检 keyword + alias / 上架打包 handle / 只读动作）与头部三段档位（接管 / 影子 / 关闭）。
+- 通道：面板 → `ctx.remote.commands.execute(sessionId, '/capability-loop …')` → Host `commands.register('capability-loop')` → `actions.js`（`dsh-doc/references/user-actions.md` 的「一个操作、两个调用方」）。
+- 安全：`ACTIONS` 白名单（audit / gate / handoff-audit / preflight / pack / visual / skill-status / sync-shadow / mode）；参数逐个校验（kind 枚举、路径 token 禁 `..`、不拼 shell）；子进程 5s grace + 动作级超时 + `AbortSignal` 取消；输出只回尾部 40 行（≤6000 字）。
+- 确认：每个动作先弹确认框（工程 + 完整命令 + 说明），确认后才执行；运行中可取消。
+- 语法：`/capability-loop run gate kind=design taskDir=docs/design [grill=1]`、`/capability-loop run audit`、`/capability-loop mode on`。
+- **部署注意**：Host 半的命令注册在应用启动时完成，改 `index.js`/`actions.js` 后需**重启应用**；client 半（`client.js`）刷新页面（Ctrl+R）即可。夹具 46 条（actions 17 + client 15 + takeover 13 + fallback 1）。
 
 ## 3. 档位：off / shadow / on
 
@@ -185,5 +194,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $st -Action sync-shadow -Roo
 - P0 的「读 state」是**软**的：模型可能跳过那次 `read`；P1 插件才是确定性的。
 - `shadowSessions` 计数只有 P1 插件能可靠递增；P0 阶段可手工 `set-mode` 升级。
 - 面板读状态需要**当前会话**授权（`workspaceFiles.read(sessionId, …)`）；第三方 bundle 不能给 `dsh-api-remotes` 加命名空间。
-- **P1 已实现并夹具验证**（10/10）；**未实测**：真实 Cordis 加载（`install_bundle` 后是否按预期激活）、自定义 `source.kind` 在 Web UI 的渲染表现、真实 token 计费差异、多工作区切换时的读取时序。
-- 未实测：P2 面板注册与运行中心（见设计稿 §8）。
+- **P1 已实现并夹具验证**；`on`/`shadow` 注入已在本机真实会话实测（`on`：2026-11-19 本工程，契约全文出现在该步用户消息后）。未实测：自定义 `source.kind` 在 Web UI 的渲染表现、真实 token 计费差异、多工作区切换时的读取时序。
+- **P2 已实现（client 半 v1）**：只读面板 + 运行中心（门禁/体检/交接体检/预检/打包/视觉探测/版本检查/影子计数/切档位）。动作不直连脚本：面板发 `/capability-loop <动作>` → Host 命令 handler → `actions.js` 白名单 + 参数校验 + 子进程超时/取消。**Host 命令注册要重启应用才生效**（client 半刷新页面即可）；真机按钮点击验收待补，见 `docs/design/grill-p2-actions-20261119.md`。

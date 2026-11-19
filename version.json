@@ -1,7 +1,7 @@
 {
   "name": "dsh-capability-loop",
-  "version": "2.12.0",
-  "released": "2026-11-18",
+  "version": "2.13.0",
+  "released": "2026-11-19",
   "lineage": [
     "session-0d908c48-92d7-432e-9303-966161df7a81",
     "session-3ef140c9-2ed3-4857-a7ad-9374b9107949",
@@ -38,6 +38,7 @@
     "trae-status.ps1": "Trae CLI/进程/当前打开工程匹配/交接包进度；-RequireMatch 不匹配 exit 1（只读）",
     "skill-status.ps1": "商店优先的版本检查（panel.json latestVersion + installed.json + 源目录回退；不自动更新）",
     "visual-qa-check.ps1": "视觉验收能力探测：A 路径可用性 + 权限受限时显式提示 A/B/C（exit 0/2/1）",
+    "ui-probe-live.ps1": "桌面窗口 UI 探针（可选，Windows）：刷新渲染器 → 点侧边栏「能力闭环」→ 截图；用于面板真机视觉验收（需可见桌面窗口）",
     "handoff-smoke.ps1": "交接链路冒烟（临时工程：建包/门禁/取证/唤起解析/工程匹配）",
     "package-skill.ps1": "上架包生成（校验 frontmatter/version/CHANGELOG + manifest + SHA256 + ZIP + 发布说明）",
     "module-preflight.py": "交接前置模块/路由预检：0=NONE 新建 / 1=EXISTS 需确认 / 3=WEAK 需确认；Python3，输出 Markdown 报告",
@@ -68,15 +69,17 @@
   "bundle": {
     "dir": "plugins/capability-loop",
     "clientEntry": "client.js",
+    "hostActions": "actions.js（会话命令 capability-loop 的白名单 + 参数校验 + 子进程/超时/取消）",
+    "commands": "capability-loop",
     "panel": "sidebar.panellist + main (key: capability-loop)",
     "name": "dsh-capability-loop-bundle",
     "kind": "host-bundle",
     "entry": "index.js",
     "hook": "agent/pre-step",
     "install": "plugin_manager action=install_bundle target=<skill>/plugins/capability-loop",
-    "test": "node --test plugins/capability-loop/test/takeover.test.mjs",
-    "verified": "fixture 10/10",
-    "unverified": ["real cordis activation", "source.kind rendering in Web UI", "token billing delta"]
+    "test": "node plugins/capability-loop/test/<file>.test.mjs（逐文件；沙箱里 node --test <dir> 会 spawn EPERM）",
+    "verified": "fixture 46/46（actions 17 + client 15 + takeover 13 + fallback 1）；on 档注入真机实测 2026-11-19",
+    "unverified": ["面板运行中心真机点击（Host 命令需重启应用注册）", "source.kind rendering in Web UI", "token billing delta"]
   },
   "templates": [
     "agents-loop-fragment.md",
@@ -110,11 +113,8 @@
     "v2.9.4：F 组修两处边界（①真实工程 `/api/...` 事故形态不再被放行——前缀集合排除 test/mock 与 `api` 段，proxy 来源取消；②括号/顿号写法：不含 `/png` 的括号剥离、含 `/png` 的保留内容，不按 `、` 切分；`不需要写` 纳入否定词）",
     "v2.9.5：F 组反向指令改**位置序**（否定词须在「/png…前缀」之前；只按 。；切句），同时满足「不要写 /api、/png 前缀」要 FAIL 与「必写、host 不写」不误报；全 weak 工程不再静默 F-skip（改出 F-prefix-weak WARN / 缺陷路径仍 FAIL）；测试文件排除改为精确后缀 + 目录（不再用子串，避免 special.ts 被误排）",
     "v2.9.6：无破坏性变更；SKILL.md frontmatter description 改为主次结构（【重点】体检/修复 DSH 自身 →【配套】项目接入/规范串接/交接/grill/迁移上架），触发词集合与触发边界不变，字符数 195→188（catalog 成本不增长）",
-    "v2.12.0：新增 client 半——侧边栏「能力闭环」全局面板（档位/阶段轨道/门禁/阻断/下一步，只读，经 GET /api/file 读 state.json）；无破坏性变更（不装则不显示面板）",
-    "v2.11.1：PATCH——修两个「装了但没生效」的真缺陷：①本地目录安装的 bundle 顶层 import dsh 包会 ERR_MODULE_NOT_FOUND 使整行不激活 → 改运行时动态解析 + 手工构造兜底；②插件 ctx.fs.writeText 未传 per-call sandboxPolicy 时按部署默认 read-only 被拒且异常被静默吞掉 → 传本会话策略并 warn。见 70-playbook ERR-20261119-01/02",
-    "v2.11.0：新增 P1 宿主接管插件 plugins/capability-loop/（agent/pre-step 注入 on/shadow 契约，fail-open + resume 去重 + 影子日志）+ loop-state.ps1 新增 sync-shadow（影子计数与升级提示）；无破坏性变更（不装插件则行为与 v2.10.0 完全一致）",
-    "v2.10.0：新增接管协议（references/02-takeover.md + templates/agents-loop-fragment.md + templates/loop-project.json）+ scripts/loop-state.ps1（状态唯一写入）+ loop-gate/capability-audit 状态写回。无破坏性变更：loop-gate 新增可选 -StateFile，未标记工程零变化；退出码语义不变",
-    "v2.12.0：新增 client 半——侧边栏「能力闭环」全局面板（档位/阶段轨道/门禁/阻断/下一步，只读，经 GET /api/file 读 state.json）；无破坏性变更（不装则不显示面板）",
+    "v2.13.0：新增运行中心——actions.js（会话命令 capability-loop 的白名单/参数校验/子进程超时与取消）+ 面板动作（门禁/体检/交接体检/预检/打包/视觉探测/版本检查/影子计数）与三段档位切换；无破坏性变更（命令未注册时面板给明确提示，不改 loop-gate/audit 退出码语义）",
+    "v2.12.0：新增 client 半——侧边栏「能力闭环」全局面板（档位/阶段轨道/门禁/阻断/下一步，只读，经 remote.session.list + workspaceFiles.read 读 state.json）；无破坏性变更（不装则不显示面板）",
     "v2.11.1：PATCH——修两个「装了但没生效」的真缺陷：①本地目录安装的 bundle 顶层 import dsh 包会 ERR_MODULE_NOT_FOUND 使整行不激活 → 改运行时动态解析 + 手工构造兜底；②插件 ctx.fs.writeText 未传 per-call sandboxPolicy 时按部署默认 read-only 被拒且异常被静默吞掉 → 传本会话策略并 warn。见 70-playbook ERR-20261119-01/02",
     "v2.11.0：新增 P1 宿主接管插件 plugins/capability-loop/（agent/pre-step 注入 on/shadow 契约，fail-open + resume 去重 + 影子日志）+ loop-state.ps1 新增 sync-shadow（影子计数与升级提示）；无破坏性变更（不装插件则行为与 v2.10.0 完全一致）",
     "v2.10.0：新增接管协议（references/02-takeover.md + templates/agents-loop-fragment.md + templates/loop-project.json）+ scripts/loop-state.ps1（状态唯一写入）+ loop-gate/capability-audit 状态写回。无破坏性变更：loop-gate 新增可选 -StateFile，未标记工程零变化；退出码语义不变；SKILL.md description 微调（【配套】加「项目接管」）"

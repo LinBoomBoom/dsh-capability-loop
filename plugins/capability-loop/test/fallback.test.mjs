@@ -9,12 +9,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN_SRC = path.resolve(HERE, '..', 'index.js')
+const ACTIONS_SRC = path.resolve(HERE, '..', 'actions.js')
 
 test('无 dsh-llm 可解析时：回退手工构造，仍能注入且消息形状正确', async () => {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-nostub-'))
   const pluginDir = path.join(sandbox, 'plugin')
   fs.mkdirSync(pluginDir, { recursive: true })
   fs.copyFileSync(PLUGIN_SRC, path.join(pluginDir, 'index.js'))
+  // index.js 现在静态 import './actions.js'，夹具要一并拷进去
+  fs.copyFileSync(ACTIONS_SRC, path.join(pluginDir, 'actions.js'))
   fs.writeFileSync(path.join(pluginDir, 'package.json'), JSON.stringify({ type: 'module' }))
   // 关键：不创建 node_modules/@deepseek-ai/dsh-llm
 
@@ -43,6 +46,7 @@ test('无 dsh-llm 可解析时：回退手工构造，仍能注入且消息形�
     workingDirectory: { ensure: async () => cwd },
     logger: { info() {}, warn: (...a) => warnings.push(a.join(' ')) },
     on: (e, h) => handlers.set(e, h),
+    inject: (keys, cb) => { cb({ effect: (fn) => { fn() }, commands: { register() {} } }) },
   }
   apply(ctx, {})
 

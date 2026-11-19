@@ -2,6 +2,48 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.13.0 — 2026-11-19（P2 运行中心：面板可跑门禁/体检/切档位）
+
+**起因**：v2.12.0 的面板只能看不能动，用户要「一步到位跑门禁」；上一轮会话在实现中途被 429 限流打断（actions.js/index.js 已写、client 未接、夹具未跑），本版收尾。
+
+**新增 `plugins/capability-loop/actions.js`（Host 运行中心）**
+- 白名单 `ACTIONS`：`audit` / `gate` / `handoff-audit` / `preflight` / `pack` / `visual` / `skill-status` / `sync-shadow` / `mode`；kind 决定解释器（powershell/python/状态脚本）。
+- 参数逐个校验：`kind` 枚举、`taskDir/slug/handle` 只允许安全 token 且禁 `..`、不拼 shell；`mode` 只接受 on/shadow/off。
+- `runSpawn`：`ctx.subprocess` + 动作级超时 + 5s grace + 输出上限；`AbortSignal` 取消一并中止子进程；结果只回尾部 40 行（≤6000 字）。
+- `executeAction(ctx, cfg, rawInput, signal)` 返回 `{ ok, text }`，永不抛错（缺 subprocess / 解释器 / spawn 失败都给一句可读原因）。
+
+**修改 `plugins/capability-loop/index.js`**
+- `ctx.inject(['commands'])` 注册会话命令 `capability-loop`（描述 + `input.hint`），handler 用 `agent.session.header.cwd`（缺省 `process.cwd()`）作工程根，调用同一 `executeAction`。
+- 命令通道 = 面板与命令行的**同一实现**（`dsh-doc/references/user-actions.md`）。
+
+**修改 `plugins/capability-loop/client.js`（面板动作）**
+- `inject` 加 `remote.commands`；`collect` 保留每个工程最近会话的 `sessionId` 作动作凭据。
+- 头部加三段档位（接管/影子/关闭）；KPI 下加「运行中心」卡片（门禁 kind+taskDir / 交接体检 slug / 模块预检 keyword+alias / 上架打包 handle / 只读动作）。
+- 每个动作先弹**确认框**（工程 + 完整命令 + 说明），确认后 `commands.execute`；运行中显示「正在运行 + 取消」；结果区展示状态/耗时/输出尾部；失败与未受理（命令未注册）分别给可操作提示。
+
+**修改 `scripts/capability-audit.ps1`（体检误报修复）**
+- 活动 profile 不再硬编码 `profiles/web`：按 desktop → web → 第一个非 default 目录探测；无 `cordis.patch.yml` 时给 WARN（patch 可选）而不是 FAIL。本机只有 `desktop` profile，旧逻辑每次体检都产生一条假 FAIL。
+
+**夹具**
+- 新增 `test/actions.test.mjs` 17 条（白名单/argv/拒绝/失败/abort）。
+- `test/client.test.mjs` 9 → 15 条（动作按钮、切档位确认→命令调用、未受理、无 commands、取消 abort）。
+- `test/takeover.test.mjs` 10 → 13 条（命令注册 descriptor、空输入/未知动作/缺 subprocess、aborted 信号）。
+- 修两个夹具的真实回归：临时沙箱只拷 `index.js` 导致 `./actions.js` `ERR_MODULE_NOT_FOUND`；`ctx.inject` 在夹具里缺失。
+
+**验证（本轮实测）**
+- 夹具：逐个文件跑 `node <file>` → **46/46 pass**（沙箱里 `node --test <dir>` 会 spawn EPERM）。
+- `node --check client.js` / `index.js` / `actions.js` → 0 错误。
+- `loop-gate.ps1 -Environment` → PASS（SKIP=1：本仓库无 `upgrade/post-restart-check.ps1`）；`-TaskDir docs/design -Kind design` → PASS（2 PASS / 1 SKIP）。
+- **`on` 档真机实测**：`loop-state.ps1 -Action set-mode -Mode on` → exit 0；本工程真实会话的下一步收到完整契约（阶段/硬约束/门禁/阻断/下一步），D-01 关闭。
+- **未实测**：面板运行中心的真机点击——Host 命令需重启应用注册，且当前环境无可操作的桌面窗口；见 `docs/design/grill-p2-actions-20261119.md`。
+
+**新增 `scripts/ui-probe-live.ps1`（可选，Windows）**
+- 桌面窗口探针：聚焦 → Ctrl+R 刷新渲染器 → 点侧边栏「能力闭环」→ PrintWindow 截图，供面板真机视觉验收；本机 `.tmp` 不可写时默认输出到 `docs/design/`。
+
+**经验写回**：playbook 增 `ERR-20261119-04`（夹具漏拷新模块）、`ERR-20261119-05`（vm 沙箱缺 AbortController / 跨 realm deepEqual）、`ERR-20261119-06`（Host 命令需重启，client 刷新即可）、`ERR-20261119-07`（工作区 `.tmp` ACL 拒绝写入，改放 `%TEMP%` 或 `docs/`）。
+
+**回滚**：`git revert` 本提交；插件旧版仍可只读面板（`client.js` 不含动作即恢复 v2.12.0 行为）。
+
 ## v2.12.0 — 2026-11-19（P2 面板 v1：侧边栏「能力闭环」入口）
 
 **起因**：用户装完 P1 后在桌面版找不到入口。P1 只做了 **host 半**（注入），按设计 P2 才有 UI——但那意味着「装了却看不见」。本版补上 client 半，给出可用的面板 v1。

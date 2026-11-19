@@ -1,13 +1,14 @@
 # 能力闭环（Capability Loop）
 
-> 给 DeepSeek Harness 加一条「工程治理」轨道：被标记的工程在**每个会话首步**自动拿到一段短契约（阶段 / 当前门禁 / 阻断 / 下一步），侧边栏同时给出一个**只读控制台**。
+> 给 DeepSeek Harness 加一条「工程治理」轨道：被标记的工程在**每个会话首步**自动拿到一段短契约（阶段 / 当前门禁 / 阻断 / 下一步），侧边栏同时给出一个控制台：**看状态 + 跑门禁/体检/切档位**。
 
 ## 它做什么
 
 | 部分 | 作用 | 在哪 |
 |---|---|---|
 | **注入（host）** | 在 `agent/pre-step` 把契约折进本步消息：`on` 档 ≈800 字符，`shadow` 档一行 | 会话里可见，无需操作 |
-| **控制台（client）** | 侧边栏「能力闭环」面板：档位 / 阶段轨道 / 门禁列表 / 阻断 / 下一步 | 左侧导航 |
+| **控制台（client）** | 侧边栏「能力闭环」面板：档位 / 阶段轨道 / 门禁列表 / 阻断 / 下一步 + **运行中心** | 左侧导航 |
+| **动作（host 命令）** | `/capability-loop` 会话命令：门禁/体检/交接体检/预检/打包/视觉探测/版本检查/影子计数/切档位；面板按钮走同一实现 | 面板或命令行 |
 | **状态源** | `.dsh/loop/state.json`，唯一写入方是 skill 的脚本 | 工程根下 |
 
 三档：`off`（不注入）/ `shadow` 影子（只记录、不阻断）/ `on` 接管（治理场景必须 INTAKE/证据/门禁/grill）。档位取 `.dsh/loop/project.json` 的 `mode`，再被 `state.json` 覆盖。**没有 `project.json` 就不接管、面板也不会列它。**
@@ -18,7 +19,15 @@
 2. 左侧导航出现 **能力闭环**（图标是环形箭头）；
 3. 点开就是控制台；没有已接入工程时显示接入命令。
 
-面板数据经 `GET /api/file?path=`（已认证通道）读取 `~/.dsh/storages/workspace.json` 与各工程的 `.dsh/loop/state.json`，**只读**，不需要会话。
+面板数据经 `ctx.remote.session.list` 找会话（含 `cwd`），再用 `ctx.remote.workspaceFiles.read(sessionId, '.dsh/loop/…')` 读状态，**只读**。动作则走会话命令通道（见下）。
+
+## 运行中心（面板动作）
+
+面板 → `ctx.remote.commands.execute(sessionId, '/capability-loop …')` → Host 命令 handler → `actions.js`（白名单 + 参数校验）→ 子进程。
+
+- 动作：`run gate kind=… taskDir=…` / `run audit` / `run handoff-audit slug=…` / `run preflight keyword=…` / `run pack handle=…` / `run visual` / `run skill-status` / `run sync-shadow` / `mode on|shadow|off`。
+- 每个动作先确认（工程 + 完整命令 + 说明）；运行中可取消（中止子进程）；输出只回尾部 40 行。
+- **Host 命令在应用启动时注册**：改 `index.js`/`actions.js` 后需重启应用；改 `client.js` 刷新页面即可。
 
 ## 接入一个工程
 

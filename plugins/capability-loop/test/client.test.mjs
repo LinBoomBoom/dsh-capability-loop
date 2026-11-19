@@ -60,7 +60,7 @@ function createReactStub() {
 /** 载入 client.js 并返回 factory 产出的 body（inject/apply）。 */
 function loadClient(react) {
   let captured
-  const sandbox = { window: { __ModuleLoader__: { load(entry) { captured = entry } } }, console }
+  const sandbox = { window: { __ModuleLoader__: { load(entry) { captured = entry } } }, console, AbortController }
   vm.createContext(sandbox)
   vm.runInContext(CLIENT_SOURCE, sandbox, { filename: 'client.js' })
   assert.ok(captured, 'client.js 应调用 window.__ModuleLoader__.load')
@@ -78,8 +78,9 @@ function loadClient(react) {
  * - calls：记录每次 workspaceFiles.read
  */
 function mount(react, options) {
-  const { sessions = [], files = {}, calls = [], listThrows = false, readThrows = false, home } = options || {}
+  const { sessions = [], files = {}, calls = [], listThrows = false, readThrows = false, home, noCommands = false, commandsResult, hangCommands = false } = options || {}
 
+  const commandsCalls = []
   const remote = {
     $host: { home },
     session: {
@@ -105,6 +106,16 @@ function mount(react, options) {
       },
     },
   }
+  if (!noCommands) {
+    remote.commands = {
+      async execute(sessionId, line, attachments, signal) {
+        commandsCalls.push({ sessionId, line, attachments, signal })
+        if (hangCommands) return new Promise(() => {})
+        if (commandsResult !== undefined) return commandsResult
+        return { ok: true, value: { commandId: 'cmd-1', result: { kind: 'success', text: '[' + line + '] ok' } } }
+      },
+    }
+  }
 
   const services = { remote, connection: undefined }
   const registrations = []
@@ -119,7 +130,7 @@ function mount(react, options) {
   api.apply(ctx)
   const main = registrations.find((r) => r.owner === 'main')
   const side = registrations.find((r) => r.owner === 'sidebar.panellist')
-  return { api, ctx, registrations, page: main ? main.component : undefined, side, calls }
+  return { api, ctx, registrations, page: main ? main.component : undefined, side, calls, commandsCalls }
 }
 
 function collectText(node, out = []) {
@@ -141,6 +152,29 @@ function session(id, cwd, updatedAt) {
   return { sessionId: id, cwd, updatedAt, running: false, blank: false, agentAvailable: true }
 }
 
+/** 在渲染树里找一个按钮（按可见文字，children 是字符串，不递归组件）。 */
+function findButton(node, label) {
+  if (node === null || node === undefined) return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findButton(child, label)
+      if (found !== null) return found
+    }
+    return null
+  }
+  if (typeof node !== 'object') return null
+  if (node.type === 'button') {
+    const text = collectText(node.children).join(' ')
+    if (text.indexOf(label) >= 0) return node
+    return null
+  }
+  // 组件元素：展开它（面板里这些子组件都不用 hooks，安全）
+  if (typeof node.type === 'function') return findButton(node.type(node.props === undefined ? {} : node.props), label)
+  return findButton(node.children, label)
+}
+
+const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
+
 const PROJECT = JSON.stringify({ name: '气量平衡月表', mode: 'on' })
 const STATE = JSON.stringify({
   mode: 'on', skillVersion: '2.12.0', stage: 'WIRE', updatedAt: '2026-11-19T09:00:00+08:00',
@@ -154,7 +188,7 @@ const STATE = JSON.stringify({
 test('body 暴露 inject 与 apply', () => {
   const api = loadClient(createReactStub())
   assert.equal(typeof api.apply, 'function')
-  assert.equal(Array.from(api.inject).join(','), 'slots,connection,remote,remote.session,remote.workspaceFiles')
+  assert.equal(Array.from(api.inject).join(','), 'slots,connection,remote,remote.session,remote.workspaceFiles,remote.commands')
 })
 
 test('注册 main(key) 与 sidebar.panellist(id/order/label)，icon 可渲染', () => {
@@ -262,4 +296,148 @@ test('无 remote 服务 → 空态 + 诊断（不抛错）', async () => {
   })
   const text = collectText(await react.render(page, {})).join(' ')
   assert.match(text, /还没有已接入的工程/)
+})
+
+// ---------------- 运行中心（P2 动作） ----------------
+
+test('运行中心：动作按钮 + 档位切换都在面板里', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page } = mount(react, { sessions: [session('s1', 'E:/proj-b', 1000)], files })
+  const text = collectText(await react.render(page, {})).join(' ')
+  assert.match(text, /运行中心/)
+  assert.match(text, /运行门禁/)
+  assert.match(text, /交接体检/)
+  assert.match(text, /模块预检/)
+  assert.match(text, /上架打包/)
+  assert.match(text, /能力体检/)
+  assert.match(text, /视觉探测/)
+  assert.match(text, /版本检查/)
+  assert.match(text, /影子计数/)
+  assert.match(text, /接管 影子 关闭/, '头部三段档位切换')
+})
+
+test('切档位：点按钮 → 确认弹窗展示完整命令 → 确认后走 remote.commands.execute', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, commandsCalls } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    commandsResult: { ok: true, value: { commandId: 'cmd-2', result: { kind: 'success', text: '[切档位] 已切换到 shadow' } } },
+  })
+
+  let tree = await react.render(page, {})
+  const shadowBtn = findButton(tree, '影子')
+  assert.ok(shadowBtn, '应有「影子」档位按钮')
+  shadowBtn.props.onClick()
+
+  tree = await react.render(page, {})
+  const modalText = collectText(tree).join(' ')
+  assert.match(modalText, /确认运行：切到影子（shadow）/)
+  assert.match(modalText, /\/capability-loop mode shadow/)
+  assert.match(modalText, /只会影响后续注入|只影响后续注入/)
+
+  const confirmBtn = findButton(tree, '确认运行')
+  assert.ok(confirmBtn, '应有确认按钮')
+  confirmBtn.props.onClick()
+  await tick()
+
+  tree = await react.render(page, {})
+  const resultText = collectText(tree).join(' ')
+  assert.match(resultText, /最近一次运行/)
+  assert.match(resultText, /\[切档位\] 已切换到 shadow/)
+
+  assert.equal(commandsCalls.length, 1)
+  assert.equal(commandsCalls[0].sessionId, 's1', '用该工程的会话作凭据')
+  assert.equal(commandsCalls[0].line, '/capability-loop mode shadow')
+  assert.equal(commandsCalls[0].attachments.length, 0, '命令不带附件')
+})
+
+test('运行门禁：命令组装带 kind/taskDir，输出回显并按结果标 PASS', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, commandsCalls } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    commandsResult: { ok: true, value: { commandId: 'cmd-3', result: { kind: 'success', text: '[门禁] PASS（exit 0）\n设计门通过' } } },
+  })
+
+  let tree = await react.render(page, {})
+  const gateBtn = findButton(tree, '运行门禁')
+  assert.ok(gateBtn)
+  gateBtn.props.onClick()
+  tree = await react.render(page, {})
+  assert.match(collectText(tree).join(' '), /\/capability-loop run gate kind=design/)
+
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  tree = await react.render(page, {})
+  const text = collectText(tree).join(' ')
+  assert.match(text, /\[门禁\] PASS/)
+  assert.equal(commandsCalls[0].line, '/capability-loop run gate kind=design')
+})
+
+test('命令未被受理（value=undefined）→ 结果区提示需重启注册', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    commandsResult: { ok: true, value: undefined },
+  })
+  let tree = await react.render(page, {})
+  findButton(tree, '关闭').props.onClick()
+  tree = await react.render(page, {})
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  tree = await react.render(page, {})
+  const text = collectText(tree).join(' ')
+  assert.match(text, /命令未被受理/)
+  assert.match(text, /需要重启应用/)
+})
+
+test('没有 remote.commands → 结果区给明确提示（不崩）', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    noCommands: true,
+  })
+  let tree = await react.render(page, {})
+  findButton(tree, '关闭').props.onClick()
+  tree = await react.render(page, {})
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  tree = await react.render(page, {})
+  const text = collectText(tree).join(' ')
+  assert.match(text, /没有 remote\.commands/)
+})
+
+test('取消运行：abort 信号传给命令通道，结果区标已取消', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, commandsCalls } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    hangCommands: true,
+  })
+  let tree = await react.render(page, {})
+  findButton(tree, '关闭').props.onClick()
+  tree = await react.render(page, {})
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  tree = await react.render(page, {})
+
+  const runningText = collectText(tree).join(' ')
+  assert.match(runningText, /正在运行：切到关闭（off）/)
+  const cancelBtn = findButton(tree, '取消')
+  assert.ok(cancelBtn, '运行中应给取消按钮')
+  cancelBtn.props.onClick()
+
+  tree = await react.render(page, {})
+  const text = collectText(tree).join(' ')
+  assert.match(text, /已取消/)
+  assert.equal(commandsCalls.length, 1)
+  assert.equal(commandsCalls[0].signal.aborted, true, '取消应 abort 传给命令通道的信号')
 })

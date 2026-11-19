@@ -94,6 +94,51 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)',
         color: 'var(--dsw-alias-label-primary)', fontSize: 12, borderRadius: 6, padding: '6px 8px',
       },
+      input: {
+        border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)', fontSize: 12, borderRadius: 6, padding: '6px 8px',
+        minWidth: 90, flex: '0 1 190px',
+      },
+      btnPrimary: {
+        background: 'var(--dsw-alias-state-business-primary)',
+        borderColor: 'transparent',
+        color: 'var(--dsw-alias-label-on-color)',
+      },
+      runRow: {
+        display: 'flex', alignItems: 'center', gap: 8, minHeight: 40, padding: '6px 14px',
+        borderTop: '1px solid var(--dsw-alias-border-l1)', fontSize: 12, flexWrap: 'wrap',
+      },
+      seg: {
+        display: 'inline-flex', border: '1px solid var(--dsw-alias-border-l2)',
+        borderRadius: 6, overflow: 'hidden', background: 'var(--dsw-alias-bg-base)',
+      },
+      segItem: {
+        border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 12, padding: '6px 10px', cursor: 'pointer',
+      },
+      segOn: {
+        background: 'var(--dsw-alias-state-business-primary)',
+        color: 'var(--dsw-alias-label-on-color)',
+        fontWeight: 600,
+      },
+      pre: {
+        margin: '0 14px 12px', padding: '10px 12px', background: 'var(--dsw-alias-bg-layer-2)',
+        borderRadius: 6, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap',
+        fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11,
+        color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55,
+      },
+      overlay: {
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,.42)',
+        display: 'grid', placeItems: 'center', zIndex: 200,
+      },
+      modal: {
+        width: 560, maxWidth: 'calc(100vw - 40px)', background: 'var(--dsw-alias-bg-base)',
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 10,
+        padding: '18px 20px', boxShadow: '0 12px 32px rgba(0,0,0,.28)',
+      },
+      modalHd: { margin: 0, fontSize: 14, fontWeight: 600 },
+      modalBody: { marginTop: 10, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.6 },
+      modalFt: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 },
       empty: { textAlign: 'center', padding: '56px 0 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 },
       mono: { fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11 },
     }
@@ -247,7 +292,12 @@ window.__ModuleLoader__.load({
         if (project === null) continue
         const state = await readJsonViaSession(filesNamespace, workspace.sessionId, '.dsh/loop/state.json')
         projects.push({
-          workspace: { id: workspace.cwd, path: workspace.cwd, title: typeof project.name === 'string' && project.name !== '' ? project.name : workspace.cwd },
+          workspace: {
+            id: workspace.cwd,
+            path: workspace.cwd,
+            title: typeof project.name === 'string' && project.name !== '' ? project.name : workspace.cwd,
+            sessionId: workspace.sessionId,
+          },
           project,
           state,
         })
@@ -281,7 +331,11 @@ window.__ModuleLoader__.load({
         const project = await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/project.json'))
         if (project === null) continue
         const state = await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/state.json'))
-        projects.push({ workspace, project, state })
+        projects.push({
+          workspace: { ...workspace, sessionId: '' },
+          project,
+          state,
+        })
       }
       return { projects }
     }
@@ -353,6 +407,203 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 当前正在跑的命令的取消控制器（面板是单例，够用）。 */
+    let activeController = null
+
+    function stampNow() {
+      const d = new Date()
+      const pad = (n) => (n < 10 ? '0' + n : String(n))
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+    }
+
+    /**
+     * 面板动作 → 会话命令行（不含 /capability-loop 前缀）。
+     * 白名单与参数校验在 Host 半（plugins/capability-loop/actions.js），这里只拼文本。
+     */
+    function buildAction(key, fields) {
+      const f = fields === undefined || fields === null ? {} : fields
+      if (key === 'gate') {
+        const kind = f.gateKind || 'design'
+        const taskDir = String(f.taskDir || '').trim()
+        return {
+          key,
+          label: '运行门禁（' + kind + '）',
+          line: 'run gate kind=' + kind + (taskDir !== '' ? ' taskDir=' + taskDir : ''),
+          note: '执行 loop-gate.ps1：结果写回 state.json；有 FAIL 时退出码非 0（不会改写结论）。',
+        }
+      }
+      if (key === 'audit') return { key, label: '能力体检', line: 'run audit', note: '九组只读体检，报告默认写到 .tmp/。' }
+      if (key === 'handoff') {
+        const slug = String(f.slug || '').trim()
+        if (slug === '') return null
+        return { key, label: '交接包体检', line: 'run handoff-audit slug=' + slug, note: '材料可达性 / 证据对账 / 批次 / 网关前缀（exit 1 = 不得交）。' }
+      }
+      if (key === 'preflight') {
+        const keyword = String(f.keyword || '').trim()
+        if (keyword === '') return null
+        const alias = String(f.alias || '').trim()
+        return { key, label: '模块/路由预检', line: 'run preflight keyword=' + keyword + (alias !== '' ? ' alias=' + alias : ''), note: 'EXISTS / WEAK 时必须先确认复用还是另建。' }
+      }
+      if (key === 'pack') {
+        const handle = String(f.handle || '').trim()
+        if (handle === '') return null
+        return { key, label: '上架打包', line: 'run pack handle=' + handle, note: '校验 frontmatter/version/CHANGELOG + manifest + SHA256 + ZIP。' }
+      }
+      if (key === 'visual') return { key, label: '视觉验收探测', line: 'run visual', note: 'exit 2 = 权限受限，必须显式让用户选 A/B/C。' }
+      if (key === 'skill-status') return { key, label: '版本检查', line: 'run skill-status' }
+      if (key === 'sync-shadow') return { key, label: '影子计数', line: 'run sync-shadow' }
+      return null
+    }
+
+    function modeAction(mode) {
+      const label = mode === 'on' ? '切到接管（on）' : mode === 'shadow' ? '切到影子（shadow）' : '切到关闭（off）'
+      return { key: 'mode', label, line: 'mode ' + mode, note: '写 state.json 的 mode；只影响后续注入，不改历史消息。' }
+    }
+
+    /** 面板 → Host 会话命令通道；返回 { ok, text }（永不抛错）。 */
+    async function runCommand(ctx, sessionId, line, signal) {
+      const remote = ctx !== undefined && ctx !== null ? ctx.get('remote') : undefined
+      const commands = remote !== undefined && remote !== null ? remote.commands : undefined
+      if (commands === undefined || commands === null || typeof commands.execute !== 'function') {
+        return { ok: false, text: '当前 composition 没有 remote.commands，面板无法触发 Host 动作。请确认插件已启用后刷新页面。' }
+      }
+      let response
+      try {
+        response = await commands.execute(sessionId, '/capability-loop ' + line, [], signal)
+      } catch (error) {
+        return { ok: false, text: '命令通道抛错：' + String(error && error.message ? error.message : error) }
+      }
+      if (response === undefined || response === null || response.ok !== true) {
+        const error = response !== undefined && response !== null ? response.error : undefined
+        return { ok: false, text: '命令通道失败：' + String(error && error.message ? error.message : '无结果') }
+      }
+      const value = response.value
+      if (value === undefined || value === null) {
+        return {
+          ok: false,
+          text: '命令未被受理（未注册或语法不符）：/capability-loop ' + line
+            + '\n提示：Host 半新注册的命令需要重启应用后才会出现。',
+        }
+      }
+      const inner = value.result !== undefined && value.result !== null ? value.result : {}
+      const ok = inner.kind === 'success'
+      const text = typeof inner.text === 'string' && inner.text !== ''
+        ? inner.text
+        : (ok ? '完成（无输出）' : '失败（无输出）')
+      return { ok, text }
+    }
+
+    function ActionCenter(props) {
+      const f = props.fields === undefined || props.fields === null ? {} : props.fields
+      const disabled = props.sessionId === '' || props.sessionId === undefined
+      const set = props.setField
+      const runBtn = (key, label, extra) => h('button', {
+        type: 'button',
+        style: { ...S.btn, ...(extra !== undefined && extra.primary === true ? S.btnPrimary : {}) },
+        disabled: disabled || (extra !== undefined && extra.disabled === true),
+        onClick: () => props.onRequest(key),
+      }, label)
+      return h('div', { style: S.card },
+        h('div', { style: S.cardHd }, '运行中心', h('span', { style: S.hint },
+          disabled ? '没有可用会话：动作需要会话凭据' : '动作 = 会话命令 /capability-loop（确认后运行）')),
+        h('div', { style: S.runRow },
+          h('span', { style: S.name }, '门禁'),
+          h('select', {
+            style: S.select, value: f.gateKind || 'design', disabled,
+            onChange: (event) => set('gateKind', event.target.value),
+          }, ['design', 'requirement', 'test', 'auto'].map((kind) => h('option', { key: kind, value: kind }, kind))),
+          h('input', {
+            style: S.input, placeholder: 'taskDir（可选，如 docs/design）', disabled,
+            value: f.taskDir || '',
+            onChange: (event) => set('taskDir', event.target.value),
+          }),
+          runBtn('gate', '运行门禁', { primary: true }),
+        ),
+        h('div', { style: S.runRow },
+          h('span', { style: S.name }, '交接体检'),
+          h('input', {
+            style: S.input, placeholder: 'slug（必填）', disabled, value: f.slug || '',
+            onChange: (event) => set('slug', event.target.value),
+          }),
+          runBtn('handoff', '运行', { disabled: String(f.slug || '').trim() === '' }),
+          h('span', { style: { ...S.name, width: 'auto', marginLeft: 10 } }, '模块预检'),
+          h('input', {
+            style: S.input, placeholder: 'keyword（必填）', disabled, value: f.keyword || '',
+            onChange: (event) => set('keyword', event.target.value),
+          }),
+          h('input', {
+            style: S.input, placeholder: 'alias（可选，空格分隔）', disabled, value: f.alias || '',
+            onChange: (event) => set('alias', event.target.value),
+          }),
+          runBtn('preflight', '运行', { disabled: String(f.keyword || '').trim() === '' }),
+        ),
+        h('div', { style: S.runRow },
+          h('span', { style: S.name }, '上架打包'),
+          h('input', {
+            style: S.input, placeholder: 'handle（必填）', disabled, value: f.handle || '',
+            onChange: (event) => set('handle', event.target.value),
+          }),
+          runBtn('pack', '运行', { disabled: String(f.handle || '').trim() === '' }),
+          h('span', { style: { ...S.name, width: 'auto', marginLeft: 10 } }, '只读动作'),
+          runBtn('audit', '能力体检'),
+          runBtn('visual', '视觉探测'),
+          runBtn('skill-status', '版本检查'),
+          runBtn('sync-shadow', '影子计数'),
+        ),
+      )
+    }
+
+    function RunningPanel(props) {
+      if (props.running === null || props.running === undefined) return null
+      return h('div', { style: S.card },
+        h('div', { style: S.cardHd }, '正在运行：' + props.running.label,
+          h('button', {
+            type: 'button', style: { ...S.btn, marginLeft: 'auto' }, onClick: props.onCancelRun,
+          }, '取消')),
+        h('div', { style: { ...S.row, ...S.meta, borderTop: 'none' } }, props.running.line),
+      )
+    }
+
+    function ResultPanel(props) {
+      const result = props.result
+      if (result === null || result === undefined) return null
+      return h('div', { style: S.card },
+        h('div', { style: S.cardHd }, '最近一次运行',
+          h(Badge, { status: result.ok ? 'PASS' : 'FAIL' }),
+          h('span', { style: S.hint },
+            result.label + ' · ' + result.at + (typeof result.elapsed === 'number' ? ' · ' + result.elapsed + 's' : '')),
+        ),
+        h('div', { style: { padding: '0 14px 8px', ...S.meta } }, result.line),
+        h('pre', { style: S.pre }, result.text),
+      )
+    }
+
+    function ConfirmModal(props) {
+      const pending = props.pending
+      if (pending === null || pending === undefined) return null
+      return h('div', { style: S.overlay }, h('div', {
+        style: S.modal, role: 'dialog', 'aria-modal': true, 'aria-label': '确认运行',
+      },
+        h('h3', { style: S.modalHd }, '确认运行：' + pending.label),
+        h('div', { style: S.modalBody },
+          h('div', null, '工程：' + pending.workspace),
+          h('div', { style: { marginTop: 8 } }, '命令：'),
+          h('code', {
+            style: {
+              ...S.mono, display: 'block', marginTop: 4, padding: '8px 10px',
+              background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 6, whiteSpace: 'pre-wrap',
+            },
+          }, '/capability-loop ' + pending.line),
+          pending.note !== undefined ? h('div', { style: { marginTop: 8 } }, pending.note) : null,
+        ),
+        h('div', { style: S.modalFt },
+          h('button', { type: 'button', style: S.btn, onClick: props.onCancel }, '取消'),
+          h('button', { type: 'button', style: { ...S.btn, ...S.btnPrimary }, onClick: props.onConfirm }, '确认运行'),
+        ),
+      ))
+    }
+
     function ProjectView(props) {
       const project = props.project
       const state = props.state
@@ -396,6 +647,12 @@ window.__ModuleLoader__.load({
               ),
             ),
             h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flex: 'none' } },
+              h('div', { style: S.seg },
+                [['on', '接管'], ['shadow', '影子'], ['off', '关闭']].map((pair) => h('button', {
+                  key: pair[0], type: 'button',
+                  style: pair[0] === mode ? { ...S.segItem, ...S.segOn } : S.segItem,
+                  onClick: () => props.onRequest('mode', pair[0]),
+                }, pair[1]))),
               props.onRefresh ? h('button', { style: S.btn, onClick: props.onRefresh, type: 'button' }, '刷新') : null,
             ),
           ),
@@ -406,6 +663,12 @@ window.__ModuleLoader__.load({
               h('span', { style: S.kpiM }, kpi.m),
             )),
           ),
+          h(ActionCenter, {
+            fields: props.fields,
+            setField: props.setField,
+            sessionId: props.sessionId,
+            onRequest: props.onRequest,
+          }),
         ),
         h('div', { style: S.card },
           h('div', { style: S.cardHd }, '阶段', h('span', { style: S.hint }, '七阶段闭环')),
@@ -470,6 +733,10 @@ window.__ModuleLoader__.load({
           : slot.ctx)
       const [view, setView] = React.useState({ status: 'loading', projects: [], error: null })
       const [selected, setSelected] = React.useState(0)
+      const [fields, setFields] = React.useState({ gateKind: 'design', taskDir: '', slug: '', keyword: '', alias: '', handle: '' })
+      const [pending, setPending] = React.useState(null)
+      const [running, setRunning] = React.useState(null)
+      const [result, setResult] = React.useState(null)
       const load = React.useCallback(() => {
         setView((prev) => ({ ...prev, status: 'loading' }))
         const source = services
@@ -479,10 +746,68 @@ window.__ModuleLoader__.load({
         }
         collectAny(source).then(
           (data) => setView({ status: 'ready', projects: data.projects, error: null }),
-          (error) => setView({ status: 'error', projects: [], error: String(error && error.message ? error.message : error) }),
+          (error) => setView({ status: 'error', projects: [], error: String(error && error.message ? error.message : error), }),
         )
       }, [services])
       React.useEffect(() => { load() }, [load])
+
+      const currentIndex = selected < view.projects.length ? selected : 0
+      const current = view.projects.length > 0 ? view.projects[currentIndex] : undefined
+      const sessionId = current !== undefined && current.workspace !== undefined && typeof current.workspace.sessionId === 'string'
+        ? current.workspace.sessionId
+        : ''
+      const setField = (name, value) => {
+        setFields((prev) => {
+          const next = { ...prev }
+          next[name] = value
+          return next
+        })
+      }
+      const requestAction = (key, mode) => {
+        if (current === undefined) return
+        const request = key === 'mode' ? modeAction(mode) : buildAction(key, fields)
+        if (request === null) return
+        if (sessionId === '') {
+          setResult({
+            label: request.label, line: request.line, ok: false, at: stampNow(),
+            text: '当前工程没有可用会话，动作需要会话凭据。',
+          })
+          return
+        }
+        setPending({ ...request, workspace: current.workspace.path, sessionId })
+      }
+      const confirmPending = () => {
+        const job = pending
+        if (job === null || job === undefined) return
+        setPending(null)
+        const controller = new AbortController()
+        activeController = controller
+        const started = Date.now()
+        setRunning({ label: job.label, line: job.line })
+        const settle = (outcome) => {
+          if (activeController === controller) activeController = null
+          setRunning(null)
+          setResult({
+            label: job.label, line: job.line, ok: outcome.ok, text: outcome.text,
+            at: stampNow(), elapsed: Math.round((Date.now() - started) / 100) / 10,
+          })
+          load()
+        }
+        runCommand(services, job.sessionId, job.line, controller.signal).then(settle, (error) => {
+          settle({ ok: false, text: '调用失败：' + String(error && error.message ? error.message : error) })
+        })
+      }
+      const cancelRun = () => {
+        const controller = activeController
+        activeController = null
+        if (controller !== null) controller.abort()
+        setRunning(null)
+        setResult((prev) => ({
+          label: prev !== null && prev !== undefined ? prev.label : '运行',
+          line: prev !== null && prev !== undefined ? prev.line : '',
+          ok: false, text: '已取消。', at: stampNow(),
+        }))
+      }
 
       if (view.status === 'loading' && view.projects.length === 0) {
         return h('div', { style: S.page }, h('div', { style: S.inner },
@@ -500,20 +825,31 @@ window.__ModuleLoader__.load({
       if (view.projects.length === 0) {
         return h('div', { style: S.page }, h('div', { style: S.inner }, h(EmptyView, { onRefresh: load, diagnostic: lastDiagnostic })))
       }
-      const index = selected < view.projects.length ? selected : 0
-      const current = view.projects[index]
       return h('div', { style: S.page }, h('div', { style: S.inner },
         view.projects.length > 1
           ? h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 } },
             h('span', { style: { ...S.meta, fontSize: 11 } }, '已接入工程'),
             h('select', {
-              style: S.select, value: String(index),
+              style: S.select, value: String(currentIndex),
               onChange: (event) => setSelected(Number(event.target.value)),
             }, view.projects.map((item, i) => h('option', { key: item.workspace.id, value: String(i) }, item.workspace.title))),
           )
           : null,
-        h(ProjectView, { project: current.project, state: current.state, workspace: current.workspace, onRefresh: load }),
-      ))
+        h(ProjectView, {
+          project: current.project,
+          state: current.state,
+          workspace: current.workspace,
+          onRefresh: load,
+          fields,
+          setField,
+          sessionId,
+          onRequest: requestAction,
+        }),
+        h(RunningPanel, { running, onCancelRun: cancelRun }),
+        h(ResultPanel, { result }),
+      ),
+      h(ConfirmModal, { pending, onCancel: () => setPending(null), onConfirm: confirmPending }),
+      )
     }
 
     function PanelIcon(props) {
@@ -528,7 +864,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'connection', 'remote', 'remote.session', 'remote.workspaceFiles'],
+      inject: ['slots', 'connection', 'remote', 'remote.session', 'remote.workspaceFiles', 'remote.commands'],
       apply(ctx) {
         pluginCtx = ctx
         ctx.slots.inject('main', () => ctx.slots.register({

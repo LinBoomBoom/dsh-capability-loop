@@ -7,7 +7,7 @@
 | 部分 | 作用 | 在哪 |
 |---|---|---|
 | **注入（host）** | 在 `agent/pre-step` 把契约折进本步消息：`on` ≈800 字符，`shadow` 一行 | 会话里可见，无需操作 |
-| **控制台（client）** | 侧边栏「能力闭环」：档位 / 阶段轨道 / 门禁 / 阻断 / 下一步 | 左侧导航 |
+| **控制台（client）** | 侧边栏「能力闭环」：档位 / 阶段轨道 / 门禁 / 阻断 / 下一步 + **运行中心**（跑门禁/体检/切档位） | 左侧导航 |
 | **状态源** | `.dsh/loop/state.json`，唯一写入方是 skill 的脚本 | 工程根下 |
 
 喂给控制台的数据在会话的 `agent/pre-step` 瀑布里组装，按档位决定长度：
@@ -93,6 +93,33 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 
 读数失败时面板空态会显示「读取诊断：<具体错误>」，不做静默空白。
 
+## 运行中心（P2 动作）
+
+面板不直接跑脚本（浏览器半边没有写权限，也没有子进程）。动作统一走**会话命令通道**：
+
+```
+面板按钮 → ctx.remote.commands.execute(sessionId, '/capability-loop run gate kind=design')
+         → Host 命令 handler（index.js）→ actions.js（白名单 + 参数校验）
+         → ctx.subprocess 起 powershell/python → 输出尾部回会话
+```
+
+| 动作 | 命令 |
+|---|---|
+| 门禁 | `run gate kind=design\|requirement\|test\|auto [taskDir=…] [grill=1]` |
+| 能力体检 | `run audit` |
+| 交接体检 | `run handoff-audit slug=<slug> [workspace=…]` |
+| 模块/路由预检 | `run preflight keyword=<词> [alias=a b]` |
+| 上架打包 | `run pack handle=<handle>` |
+| 视觉验收探测 | `run visual [out=<目录>]` |
+| 版本检查 | `run skill-status` |
+| 影子计数 | `run sync-shadow` |
+| 切档位 | `mode on\|shadow\|off` |
+
+- 每个动作先弹**确认框**（工程 + 完整命令 + 说明），确认后才执行；运行中可**取消**（AbortSignal 一并中止子进程）。
+- 安全：`ACTIONS` 白名单；`kind` 枚举、路径 token 禁 `..`、不拼 shell；动作级超时 + 5s grace；输出只回尾部 40 行。
+- 同一实现也给命令行：在会话里直接输入 `/capability-loop run audit`。
+- **部署注意**：Host 半的命令在应用启动时注册，改 `index.js`/`actions.js` 后需**重启应用**；`client.js` 改动刷新页面（Ctrl+R）即可。
+
 ## 配置（`cordis.patch.yml`）
 
 | 键 | 默认 | 含义 |
@@ -111,19 +138,21 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 | 状态 | skill 脚本（`loop-state.ps1` / `loop-gate.ps1` / `capability-audit.ps1`） | `.dsh/loop/state.json` |
 | 注入 | **本插件 host 半** | 首步契约/影子提示 |
 | 证据 | 门禁脚本 | `checks.*` + 退出码 |
-| 面板 | **本插件 client 半** | 档位/阶段/门禁/阻断/下一步（只读） |
+| 面板 | **本插件 client 半** | 档位/阶段/门禁/阻断/下一步 + 运行中心（动作经会话命令回到 host） |
 
 ## 已验证 / 未验证
 
 **已验证**
-- 夹具 `node --test plugins/capability-loop/`：**20/20**（host 11 + client 9）。
-  - host：未标记零注入、off 不注入、shadow 一行 + 影子日志 + 同会话不重复、on 契约 ≤1600 且含阶段/门禁/阻断/下一步、注入位置、resume/同批去重、fs 抛错 fail-open、坏 JSON 降级、无 `dsh-llm` 时手工构造兜底。
-  - client：两个 slot 注册（key/id/order/label/icon）、有工程渲染、多工程切换、空态、会话为空、list 抛错、read 抛错、无 remote 服务。
-- **真机（桌面版 2026-11-19）**：`install_bundle` → `set_plugin` → `application: applied`；侧边栏出现「能力闭环」；点开后读到本仓库真实 `state.json`（影子 2/3、GATE 7/7、设计门 PASS、D-01 阻断、下一步命令、skill v2.12.0），「刷新」按钮可重读。
+- 夹具：**46/46**（actions 17 + client 15 + takeover 13 + fallback 1），逐文件跑 `node <file>`（沙箱里 `node --test <dir>` 会因 spawn 管道 EPERM）。
+  - host：未标记零注入、off 不注入、shadow 一行 + 影子日志 + 同会话不重复、on 契约 ≤1600 且含阶段/门禁/阻断/下一步、注入位置、resume/同批去重、fs 抛错 fail-open、坏 JSON 降级、无 `dsh-llm` 时手工构造兜底、命令注册与空输入/未知动作/缺 subprocess/aborted 四条。
+  - actions：白名单、`kind` 枚举、`taskDir` 禁 `..`、argv 构造（gate/audit/mode/sync-shadow/pack/handoff-audit）、缺参与非法值的拒绝、非零退出回 FAIL、abort 不 spawn。
+  - client：两个 slot 注册、有工程渲染、多工程切换、空态/异常、运行中心动作按钮、切档位确认→`commands.execute` 调用、命令未受理提示、无 `remote.commands` 提示、取消 abort。
+- **真机（桌面版 2026-11-19）**：`install_bundle` → `set_plugin` → `application: applied`；侧边栏出现「能力闭环」并读到本仓库真实 `state.json`。
 - 会话里收到 `shadow` 一行提示；影子日志记账；`sync-shadow` 计数。
+- **`on` 档真机实测**：`set-mode -Mode on` → 下一步即收到完整契约（阶段/硬约束/门禁/阻断/下一步），脚本 `[PASS]`、exit 0。
 
 **未验证**
-- `on` 档在真实会话里的整段契约（当前仓库是 `shadow`，切 `on` 即可验）。
+- 面板运行中心的**真机点击**：Host 命令需重启应用注册（当前进程仍是旧模块）；当前环境无可操作的桌面窗口。补测：重启应用 → 打开「能力闭环」→ 点「运行门禁（design）」→ 应出现确认框与 `[门禁] PASS`。
 - Web UI 对 `source.kind='capability-loop'` 的渲染样式（现在当普通用户消息显示）。
 - token 计费差异；面板在 375/768 宽度下的排版。
 

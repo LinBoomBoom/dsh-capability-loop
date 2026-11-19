@@ -29,6 +29,8 @@
  * 能解析就用官方 `createUserMessage`，解析不到就按 `repair.ts` 同款形状手工构造。
  */
 
+import { executeAction } from './actions.js'
+
 export const name = 'capability-loop-takeover'
 
 /** 没有 fs / workingDirectory 的 profile 里保持不激活（不抛错）。 */
@@ -320,6 +322,8 @@ export function apply(ctx, config) {
     shadowLog: true,
     debug: false,
     skillDir: '',
+    pythonExecutable: '',
+    workspaceRoot: '',
     ...(config !== null && config !== undefined ? config : {}),
   }
   if (cfg.defaultMode !== 'off' && cfg.defaultMode !== 'shadow' && cfg.defaultMode !== 'on') {
@@ -409,4 +413,29 @@ export function apply(ctx, config) {
       return decision
     }
   })
+
+  // ---------------- 运行中心：会话命令通道 ----------------
+  // 客户端面板用 `ctx.remote.commands.execute(sessionId, '/capability-loop run gate …')` 触发；
+  // 白名单与参数校验在 actions.js，绝不拼 shell。
+  ctx.inject(['commands'], (scoped) => {
+    scoped.effect(() => scoped.commands.register({
+      name: 'capability-loop',
+      description: '能力闭环：运行门禁/体检/交接体检/预检/打包/视觉探测/切档位（面板按钮走同一实现）',
+      input: { hint: 'run gate kind=design taskDir=docs/design | mode on' },
+      handler: async ({ agent, rawInput, signal }) => {
+        const root = cfg.workspaceRoot !== '' ? cfg.workspaceRoot : cwdOf(agent)
+        const outcome = await executeAction(ctx, { ...cfg, workspaceRoot: root }, rawInput, signal)
+        if (signal !== undefined && signal.aborted) return { kind: 'error', text: '已取消' }
+        return { kind: outcome.ok ? 'success' : 'error', text: outcome.text }
+      },
+    }))
+  })
+}
+
+/** 取会话工作目录（命令 handler 只有 agent）。 */
+function cwdOf(agent) {
+  const session = agent !== undefined && agent !== null ? agent.session : undefined
+  const header = session !== undefined && session !== null ? session.header : undefined
+  const cwd = header !== undefined && header !== null && typeof header.cwd === 'string' ? header.cwd : ''
+  return cwd !== '' ? cwd : process.cwd()
 }

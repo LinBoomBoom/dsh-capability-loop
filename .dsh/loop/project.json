@@ -1,7 +1,7 @@
 {
     "schema":  1,
     "name":  "dsh-capability-loop",
-    "mode":  "shadow",
+    "mode":  "on",
     "profile":  "docs/loop/project-profile.md",
     "createdAt":  "2026-11-18T23:34:42+08:00"
 }
