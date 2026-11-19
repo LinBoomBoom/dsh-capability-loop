@@ -149,6 +149,22 @@ window.__ModuleLoader__.load({
       modalHd: { margin: 0, fontSize: 16, fontWeight: 600, lineHeight: 1.4 },
       modalBody: { marginTop: 10, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.6 },
       modalFt: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 },
+      projectBar: {
+        display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, padding: '8px 12px',
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8,
+        background: 'var(--dsw-alias-bg-layer-1)', fontSize: 12,
+      },
+      projectTag: { color: 'var(--dsw-alias-label-caption)', fontSize: 11, flex: 'none' },
+      projectPath: {
+        color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'var(--ds-font-family-code, monospace)',
+        fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      },
+      projectChip: {
+        display: 'inline-flex', alignItems: 'center', height: 18, padding: '0 6px',
+        borderRadius: 4, fontSize: 10, fontWeight: 500,
+        background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)',
+        color: 'var(--dsw-alias-label-tertiary)',
+      },
       empty: { textAlign: 'center', padding: '56px 0 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 },
       mono: { fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11 },
     }
@@ -515,8 +531,10 @@ window.__ModuleLoader__.load({
         onClick: () => props.onRequest(key),
       }, label)
       return h('div', { style: S.card },
-        h('div', { style: S.cardHd }, '运行中心', h('span', { style: S.hint },
-          disabled ? '没有可用会话：动作需要会话凭据' : '动作 = 会话命令 /capability-loop（确认后运行）')),
+        h('div', { style: S.cardHd }, '运行中心',
+          props.projectName !== undefined ? h('span', { style: S.projectChip }, props.projectName) : null,
+          h('span', { style: S.hint },
+            disabled ? '没有可用会话：动作需要会话凭据' : '动作 = 会话命令 /capability-loop（确认后运行）')),
         h('div', { style: S.runRow },
           h('span', { style: S.name }, '门禁'),
           h('select', {
@@ -673,6 +691,22 @@ window.__ModuleLoader__.load({
               props.onRefresh ? h('button', { style: S.btn, onClick: props.onRefresh, type: 'button' }, '刷新') : null,
             ),
           ),
+          h('div', { style: S.projectBar },
+            h('span', { style: S.projectTag }, '工程'),
+            h('select', {
+              style: S.select,
+              value: String(props.selectedIndex === undefined ? 0 : props.selectedIndex),
+              disabled: !Array.isArray(props.projects) || props.projects.length <= 1,
+              title: '切换工程会重新读取该工程的状态',
+              onChange: (event) => { if (props.onSelect) props.onSelect(Number(event.target.value)) },
+            }, (Array.isArray(props.projects) ? props.projects : []).map((item, i) =>
+              h('option', { key: item.workspace.id, value: String(i) }, item.workspace.title))),
+            h('span', { style: S.projectPath }, props.workspace.path),
+            h('span', { style: S.hint },
+              Array.isArray(props.projects) && props.projects.length > 1
+                ? '已接入工程 ' + props.projects.length + ' 个 · 切换后重读该工程状态'
+                : '只列已接入工程；未接入的跑 init 后出现'),
+          ),
           h('div', { style: S.kpis },
             kpis.map((kpi) => h('div', { key: kpi.id, style: S.kpi },
               h('span', { style: S.kpiK }, kpi.k),
@@ -684,15 +718,16 @@ window.__ModuleLoader__.load({
             fields: props.fields,
             setField: props.setField,
             sessionId: props.sessionId,
+            projectName: name,
             onRequest: props.onRequest,
           }),
         ),
         h('div', { style: S.card },
-          h('div', { style: S.cardHd }, '阶段', h('span', { style: S.hint }, '七阶段闭环')),
+          h('div', { style: S.cardHd }, '阶段', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, '七阶段闭环')),
           h(StageTrack, { index: info.index }),
         ),
         h('div', { style: S.card },
-          h('div', { style: S.cardHd }, '门禁与证据', h('span', { style: S.hint }, '点击行展开命令与退出码')),
+          h('div', { style: S.cardHd }, '门禁与证据', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, '点击行展开命令与退出码')),
           checks.length === 0
             ? h('div', { style: { ...S.row, ...S.meta } }, '还没有门禁记录：跑一次 loop-gate.ps1 就会出现在这里。')
             : checks.map((row) => h('div', { key: row.key, style: S.row },
@@ -703,7 +738,7 @@ window.__ModuleLoader__.load({
             )),
         ),
         h('div', { style: S.card },
-          h('div', { style: S.cardHd }, '阻断与下一步', h('span', { style: S.hint }, blockers.length + ' 项阻断')),
+          h('div', { style: S.cardHd }, '阻断与下一步', h('span', { style: S.projectChip }, name), h('span', { style: S.hint }, blockers.length + ' 项阻断')),
           blockers.length === 0
             ? h('div', { style: { ...S.row, ...S.meta } }, '无阻断')
             : blockers.map((b, i) => h('div', { key: (b.id || 'b') + i, style: S.row },
@@ -843,15 +878,6 @@ window.__ModuleLoader__.load({
         return h('div', { style: S.page }, h('div', { style: S.inner }, h(EmptyView, { onRefresh: load, diagnostic: lastDiagnostic })))
       }
       return h('div', { style: S.page }, h('div', { style: S.inner },
-        view.projects.length > 1
-          ? h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 } },
-            h('span', { style: { ...S.meta, fontSize: 11 } }, '已接入工程'),
-            h('select', {
-              style: S.select, value: String(currentIndex),
-              onChange: (event) => setSelected(Number(event.target.value)),
-            }, view.projects.map((item, i) => h('option', { key: item.workspace.id, value: String(i) }, item.workspace.title))),
-          )
-          : null,
         h(ProjectView, {
           project: current.project,
           state: current.state,
@@ -861,6 +887,12 @@ window.__ModuleLoader__.load({
           setField,
           sessionId,
           onRequest: requestAction,
+          projects: view.projects,
+          selectedIndex: currentIndex,
+          onSelect: (index) => {
+            setSelected(index)
+            load()
+          },
         }),
         h(RunningPanel, { running, onCancelRun: cancelRun }),
         h(ResultPanel, { result }),

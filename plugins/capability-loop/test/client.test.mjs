@@ -173,6 +173,25 @@ function findButton(node, label) {
   return findButton(node.children, label)
 }
 
+/** 在渲染树里找一个 select（按选项文字）。 */
+function findSelectWithOption(node, label) {
+  if (node === null || node === undefined) return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findSelectWithOption(child, label)
+      if (found !== null) return found
+    }
+    return null
+  }
+  if (typeof node !== 'object') return null
+  if (node.type === 'select') {
+    const text = collectText(node.children).join(' ')
+    return text.indexOf(label) >= 0 ? node : null
+  }
+  if (typeof node.type === 'function') return findSelectWithOption(node.type(node.props === undefined ? {} : node.props), label)
+  return findSelectWithOption(node.children, label)
+}
+
 const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const PROJECT = JSON.stringify({ name: '气量平衡月表', mode: 'on' })
@@ -232,6 +251,12 @@ test('有已接入工程 → 渲染档位/阶段/门禁/阻断/下一步，且�
   assert.match(text, /补 design-context 后重跑设计门/)
   assert.match(text, /loop-gate -Kind design/)
   assert.match(text, /E:\/proj-b\/\.dsh\/loop\/state\.json/)
+  // 工程归属：工程条 + 每张卡片都带工程名 chip，单工程也能看出阻断属于谁
+  assert.match(text, /工程 气量平衡月表 E:\/proj-b/, '工程条显示名称与路径')
+  assert.match(text, /只列已接入工程/, '单工程时说明接入范围')
+  assert.match(text, /阻断与下一步 气量平衡月表/, '阻断卡片带工程名')
+  assert.match(text, /门禁与证据 气量平衡月表/, '门禁卡片带工程名')
+  assert.match(text, /运行中心 气量平衡月表/, '运行中心卡片带工程名')
 
   assert.ok(calls.length >= 2, '应读 project.json 与 state.json')
   assert.ok(calls.every((c) => c.sessionId === 's1'), '用该工作区最近会话作凭据')
@@ -254,6 +279,41 @@ test('多个工作区 → 每个工作区各用自己的会话读取，并给出
   assert.match(text, /已接入工程/, '多工程时应有切换器')
   assert.match(text, /proj-a/)
   assert.ok(calls.some((c) => c.sessionId === 'sa') && calls.some((c) => c.sessionId === 'sb'))
+})
+
+test('多工程：切换工程会重读该工程状态，内容跟着换', async () => {
+  const react = createReactStub()
+  const files = {
+    'sa|.dsh/loop/project.json': JSON.stringify({ name: 'proj-a', mode: 'shadow' }),
+    'sa|.dsh/loop/state.json': JSON.stringify({
+      mode: 'shadow', stage: 'GATE', checks: {}, updatedAt: '2026-11-19T10:00:00+08:00',
+      blockers: [{ id: 'D-09', text: 'A 工程的阻断', owner: 'lead' }], next: { label: 'A 的下一步' },
+    }),
+    'sb|.dsh/loop/project.json': PROJECT,
+    'sb|.dsh/loop/state.json': STATE,
+  }
+  const { page, calls } = mount(react, {
+    sessions: [session('sa', 'E:/proj-a', 2000), session('sb', 'E:/proj-b', 1000)],
+    files,
+  })
+  let tree = await react.render(page, {})
+  let text = collectText(tree).join(' ')
+  assert.match(text, /已接入工程 2 个/)
+  assert.match(text, /阻断与下一步 proj-a/, '默认选中最近会话的工程（proj-a）')
+  assert.match(text, /D-09 A 工程的阻断/)
+
+  const before = calls.length
+  const select = findSelectWithOption(tree, '气量平衡月表')
+  assert.ok(select, '应有工程下拉')
+  select.props.onChange({ target: { value: '1' } })
+  await tick()
+  tree = await react.render(page, {})
+  text = collectText(tree).join(' ')
+
+  assert.ok(calls.length > before, '切换后应重读该工程状态')
+  assert.match(text, /阻断与下一步 气量平衡月表/, '切到 proj-b 后卡头跟着换')
+  assert.match(text, /D-01 缺 1440 截图/, '阻断内容跟着换')
+  assert.doesNotMatch(text, /D-09 A 工程的阻断/)
 })
 
 test('没有已接入工程 → 空态（显示接入命令）', async () => {
