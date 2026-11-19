@@ -23,16 +23,24 @@
 - 技能包版本 2.11.1 → 2.12.0（MINOR：新增 UI 能力，不装则无变化）。
 
 **验证（本轮实测）**
-- 夹具：`node --test plugins/capability-loop/` → **18/18 pass**（host 11 + client 7）。
+- 夹具：`node --test plugins/capability-loop/` → **20/20 pass**（host 11 + client 9）。
 - `node --check client.js` → 0 错误；`package.json` 可解析。
 - profile 解析：`dsh-capability-loop-bundle/client`、`/locale/zh.json`、`/package.json` 均能从 profile 解析到工作区文件。
 - `set_plugin include:capability-loop` → `application: applied`；`install_bundle` 依赖仍是 link（junction）。
 - 技能包：74 条目、WARN=0。
+- **真机（桌面版）**：`Ctrl+R` 重载后左侧出现「能力闭环」，点开读到本仓库真实 `state.json`（影子 2/3、GATE 7/7、设计门 PASS、D-01、下一步、skill v2.12.0），「刷新」可重读。截图见 `.tmp/design-evidence/probe-refresh.png`。
+
+**过程中修掉的两个客户端真缺陷（已记入 70-playbook ERR-20261119-03）**
+1. **`ctx.connection.fetch` 在浏览器半边不存在**（只有 Host 侧 Connection 有 `fetch(request, peer)`），且桌面渲染器跑在 `dsh-app://` 源上，`globalThis.fetch('/api/file?path=')` 命中不了 HTTP API → 面板一开始只能显示空态。改为 `remote.session.list({})` 取会话（含 `cwd`）+ `remote.workspaceFiles.read(sessionId, 相对路径)`。
+2. **`inject` 要用点号键**：只写 `remote` 时访问 `remote.session` 报 `cannot get property "remote.session" without inject`。改为 `['slots','connection','remote','remote.session','remote.workspaceFiles']`。
+3. 顺带：面板空态增加「读取诊断：<具体错误>」——把静默空白换成可定位的一句话。
 
 **未实测 / 已知限制**
-- **面板在桌面版的实际渲染未目视确认**：当前窗口进程启动早于 client 半写入，渲染器的 client 模块图是启动时建的；没有运行 `pnpm run dev:web` 时，**必须刷新页面（Ctrl+R）或重启应用**才会加载新面板。刷新后左侧导航应出现「能力闭环」。
-- 面板文字中文硬编码（未接 locale 字典）；只读，没有「运行门禁 / 切档位」按钮；只列 `workspace.json` 里登记过的工程。
-- `on` 档真实会话的整段契约仍未实测。
+- **面板需要刷新页面（Ctrl+R）或重启应用才出现**：渲染器的 client 模块图是启动时建的；本机未跑 `pnpm run dev:web`，`client.js` 改动不会热加载。
+- `on` 档真实会话的整段契约仍未实测（本仓库是 `shadow`；切 `on` 即验）。
+- Web UI 对 `source.kind='capability-loop'` 的渲染样式当普通用户消息；token 计费差异未测。
+- 面板文字中文硬编码（未接 locale 字典）；只读，没有「运行门禁 / 切档位」按钮；只列有会话的工作区。
+- 面板背景沿用应用壁纸的透底（与对话区一致），未为可读性单独加不透明底。
 
 **回滚**：`git revert`；或卸载插件；面板随插件行关闭一起消失（不影响 skill 侧脚本）。
 

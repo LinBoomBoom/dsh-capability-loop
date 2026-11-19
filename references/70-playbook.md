@@ -121,6 +121,15 @@
 修法：写入时显式传**本会话自己的**策略：`ctx.sandboxPolicy.resolve({ session })` 作为 `writeText` 第 5 个参数；并**不要静默 catch**，至少 `logger.warn` 一条。只读会话里写入被拒是正确行为（尊重用户沙箱），降级即可。
 验证：改完看目标文件是否出现当前 session id；`read-only` 会话下应 warn 且不落盘。
 
+**ERR-20261119-03 · 客户端插件读文件：`ctx.connection.fetch` 在浏览器半边不存在**
+现象：面板渲染出来了，但读数据报 `connection.fetch is not a function`（或在桌面壳里 `fetch /api/file` 直接失败）。
+根因：`ctx.connection` 的**浏览器**半边（`dsh-client-connection/src/client/index.ts` 的 `ConnectionHandle`）只暴露 `interactions / isLoopback / generation / state / rpc / openWebSocket / reconnect / registerGenerationSource / start`——**没有 `fetch`、没有 `browserPeer`**。`fetch(request, peer)` 属于 **Host** 侧 Connection（`rpc-host.ts`）。而且桌面渲染器跑在 `dsh-app://` 源上，用 `globalThis.fetch('/api/file?…')` 也命中不了 HTTP API。
+修法：客户端要读文件就走生成的 Remote：`ctx.remote.session.list({})` 拿会话（`SessionSummary` 含 `sessionId` + `cwd`）→ `ctx.remote.workspaceFiles.read(sessionId, '<工作区相对路径>', {}, signal)`。相对路径落在该会话的工作区根，所以连 DSH home 都不用知道。
+**配套的第二个坑**：Cordis 对子服务是点号键，`inject` 里必须写全，否则运行时报
+`cannot get property "remote.session" without inject`。即：
+`inject: ['slots', 'connection', 'remote', 'remote.session', 'remote.workspaceFiles']`。
+验证：面板空态里显示「读取诊断：…」——成功读到时该行显示「未发生错误」；失败时直接把 HTTP 状态/异常文本打出来，别做静默空白。
+
 ## E. 交接与协作
 
 **ERR-20261112-20 · Trae 自判 PASS / 改需求**

@@ -1,14 +1,13 @@
 // client half 的离线夹具：用极简 React 桩（能跑 hooks + 重渲染）驱动
 // factory → apply(ctx) → 渲染，验证：
 //   ① 两个 slot 注册（main key / sidebar.panellist id/order/label/icon）
-//   ② 数据读取走 connection.fetch('/api/file?path=...')（带 peer）
+//   ② 数据通道：remote.session.list → remote.workspaceFiles.read(sessionId, 相对路径)
 //   ③ 空态 / 有工程 / 读不到 三态渲染不抛错
 // 不覆盖真实浏览器渲染（那需要桌面版/浏览器实跑）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
@@ -72,29 +71,42 @@ function loadClient(react) {
   })
 }
 
-/** 只响应 /api/file 的 connection 桩；files: 绝对路径 → 文本内容。 */
-function makeConnection(files, calls) {
-  return {
-    browserPeer: { principal: 'owner' },
-    async fetch(url, peer) {
-      calls.push({ url, peer })
-      const match = /\/api\/file\?path=([^&]+)/.exec(url)
-      if (match === null) return { ok: false, status: 404 }
-      const target = decodeURIComponent(match[1]).replace(/\\/g, '/')
-      const hit = Object.keys(files).find((k) => k.replace(/\\/g, '/') === target)
-      if (hit === undefined) return { ok: false, status: 404 }
-      return { ok: true, status: 200, async text() { return files[hit] } }
+/**
+ * 造插件 ctx 并 apply，返回 main 面板组件。
+ * - sessions：remote.session.list 返回的条目（含 sessionId / cwd / updatedAt）
+ * - files：`<sessionId>|.dsh/loop/state.json` → 文本
+ * - calls：记录每次 workspaceFiles.read
+ */
+function mount(react, options) {
+  const { sessions = [], files = {}, calls = [], listThrows = false, readThrows = false, home } = options || {}
+
+  const remote = {
+    $host: { home },
+    session: {
+      async list() {
+        if (listThrows) throw new Error('list-boom')
+        return { ok: true, value: { items: sessions } }
+      },
+    },
+    workspaceFiles: {
+      async read(sessionId, relPath) {
+        calls.push({ sessionId, relPath })
+        if (readThrows) {
+          const error = new Error('read-boom')
+          throw error
+        }
+        const key = sessionId + '|' + String(relPath).replace(/\\/g, '/')
+        if (!(key in files)) {
+          const error = new Error('workspace-file/not-found')
+          error.code = 'workspace-file/not-found'
+          throw error
+        }
+        return { ok: true, value: { text: files[key], offset: 1, lines: 1, eof: true, absolutePath: relPath, version: 1 } }
+      },
     },
   }
-}
 
-/** 造插件 ctx（含 slots 桩）并 apply，返回 main 面板组件。 */
-function mount(react, options) {
-  const { files = {}, home, calls = [], fetchThrows = false } = options || {}
-  const connection = fetchThrows
-    ? { browserPeer: {}, async fetch() { throw new Error('boom') } }
-    : makeConnection(files, calls)
-  const services = { connection, remote: { $host: { home } } }
+  const services = { remote, connection: undefined }
   const registrations = []
   const ctx = {
     get(name) { return services[name] },
@@ -124,22 +136,29 @@ function collectText(node, out = []) {
   return out
 }
 
-function workspaceJson(entries) {
-  const table = {}
-  for (const entry of entries) table[entry.id] = entry
-  return JSON.stringify({ unit: { name: 'workspace', version: 2 }, global: {}, tables: { workspaces: table } })
+/** 一条会话语义：workspace = 该会话 cwd。 */
+function session(id, cwd, updatedAt) {
+  return { sessionId: id, cwd, updatedAt, running: false, blank: false, agentAvailable: true }
 }
+
+const PROJECT = JSON.stringify({ name: '气量平衡月表', mode: 'on' })
+const STATE = JSON.stringify({
+  mode: 'on', skillVersion: '2.12.0', stage: 'WIRE', updatedAt: '2026-11-19T09:00:00+08:00',
+  checks: { design: { status: 'FAIL', exit: 1, at: '2026-11-19T09:00:00+08:00' }, grill: { status: 'MISSING' } },
+  blockers: [{ id: 'D-01', text: '缺 1440 截图', owner: 'lead', due: '2026-11-20' }],
+  next: { label: '补 design-context 后重跑设计门', command: 'loop-gate -Kind design' },
+})
 
 // ---------------- 注册契约 ----------------
 
 test('body 暴露 inject 与 apply', () => {
   const api = loadClient(createReactStub())
   assert.equal(typeof api.apply, 'function')
-  assert.equal(Array.from(api.inject).join(','), 'slots,connection,remote')
+  assert.equal(Array.from(api.inject).join(','), 'slots,connection,remote,remote.session,remote.workspaceFiles')
 })
 
 test('注册 main(key) 与 sidebar.panellist(id/order/label)，icon 可渲染', () => {
-  const { registrations } = mount(createReactStub(), { files: {}, home: 'C:/home' })
+  const { registrations } = mount(createReactStub(), {})
   assert.equal(registrations.length, 2, '只注册两个 slot')
   const main = registrations.find((r) => r.owner === 'main')
   assert.equal(main.options.key, 'capability-loop')
@@ -158,41 +177,15 @@ test('注册 main(key) 与 sidebar.panellist(id/order/label)，icon 可渲染', 
 
 // ---------------- 渲染 ----------------
 
-test('无已接入工程 → 空态（显示接入命令）', async () => {
+test('有已接入工程 → 渲染档位/阶段/门禁/阻断/下一步，且只用会话相对读', async () => {
   const react = createReactStub()
-  const home = path.join(os.tmpdir(), 'cl-home-' + Date.now())
   const files = {
-    [path.join(home, 'storages/workspace.json')]: workspaceJson([
-      { id: 'w1', path: 'E:/proj-a', title: 'proj-a', updatedAt: '2026-11-01T00:00:00Z' },
-    ]),
+    's1|.dsh/loop/project.json': PROJECT,
+    's1|.dsh/loop/state.json': STATE,
   }
-  const { page, calls } = mount(react, { files, home })
+  const { page, calls } = mount(react, { sessions: [session('s1', 'E:/proj-b', 1000)], files })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /还没有已接入的工程/)
-  assert.match(text, /loop-state\.ps1 -Action init/)
-  assert.ok(calls.length > 0, '应通过 connection.fetch 读取')
-  assert.ok(calls.every((c) => c.peer !== undefined), '每次 fetch 都带 peer')
-  assert.ok(calls.every((c) => c.url.startsWith('/api/file?path=')), '只走 /api/file')
-})
 
-test('有已接入工程 → 渲染档位/阶段/门禁/阻断/下一步', async () => {
-  const react = createReactStub()
-  const home = path.join(os.tmpdir(), 'cl-home2-' + Date.now())
-  const wsPath = 'E:/proj-b'
-  const files = {
-    [path.join(home, 'storages/workspace.json')]: workspaceJson([
-      { id: 'w2', path: wsPath, title: 'proj-b', updatedAt: '2026-11-18T00:00:00Z' },
-    ]),
-    [wsPath + '/.dsh/loop/project.json']: JSON.stringify({ name: '气量平衡月表', mode: 'on' }),
-    [wsPath + '/.dsh/loop/state.json']: JSON.stringify({
-      mode: 'on', skillVersion: '2.11.1', stage: 'WIRE', updatedAt: '2026-11-19T09:00:00+08:00',
-      checks: { design: { status: 'FAIL', exit: 1, at: '2026-11-19T09:00:00+08:00' }, grill: { status: 'MISSING' } },
-      blockers: [{ id: 'D-01', text: '缺 1440 截图', owner: 'lead', due: '2026-11-20' }],
-      next: { label: '补 design-context 后重跑设计门', command: 'loop-gate -Kind design' },
-    }),
-  }
-  const { page } = mount(react, { files, home })
-  const text = collectText(await react.render(page, {})).join(' ')
   assert.match(text, /能力闭环/)
   assert.match(text, /气量平衡月表/)
   assert.match(text, /接管/)
@@ -205,38 +198,68 @@ test('有已接入工程 → 渲染档位/阶段/门禁/阻断/下一步', async
   assert.match(text, /补 design-context 后重跑设计门/)
   assert.match(text, /loop-gate -Kind design/)
   assert.match(text, /E:\/proj-b\/\.dsh\/loop\/state\.json/)
+
+  assert.ok(calls.length >= 2, '应读 project.json 与 state.json')
+  assert.ok(calls.every((c) => c.sessionId === 's1'), '用该工作区最近会话作凭据')
+  assert.ok(calls.every((c) => String(c.relPath).indexOf('.dsh/loop/') === 0), '只读 .dsh/loop 下的相对路径')
 })
 
-test('shadow 档 → 显示影子与观察进度', async () => {
+test('多个工作区 → 每个工作区各用自己的会话读取，并给出工程下拉', async () => {
   const react = createReactStub()
-  const home = path.join(os.tmpdir(), 'cl-home3-' + Date.now())
-  const wsPath = 'E:/proj-c'
   const files = {
-    [path.join(home, 'storages/workspace.json')]: workspaceJson([
-      { id: 'w3', path: wsPath, title: 'proj-c', updatedAt: '2026-11-18T00:00:00Z' },
-    ]),
-    [wsPath + '/.dsh/loop/project.json']: JSON.stringify({ name: 'proj-c', mode: 'shadow' }),
-    [wsPath + '/.dsh/loop/state.json']: JSON.stringify({
-      mode: 'shadow', stage: 'GATE', shadow: { sessions: 2, target: 3, canUpgrade: false },
-      checks: {}, blockers: [],
-    }),
+    'sa|.dsh/loop/project.json': JSON.stringify({ name: 'proj-a', mode: 'shadow' }),
+    'sa|.dsh/loop/state.json': JSON.stringify({ mode: 'shadow', stage: 'GATE', checks: {}, blockers: [] }),
+    'sb|.dsh/loop/project.json': PROJECT,
+    'sb|.dsh/loop/state.json': STATE,
   }
-  const { page } = mount(react, { files, home })
+  const { page, calls } = mount(react, {
+    sessions: [session('sa', 'E:/proj-a', 2000), session('sb', 'E:/proj-b', 1000)],
+    files,
+  })
   const text = collectText(await react.render(page, {})).join(' ')
-  assert.match(text, /影子/)
-  assert.match(text, /已观察 2 \/ 3 个会话/)
+  assert.match(text, /已接入工程/, '多工程时应有切换器')
+  assert.match(text, /proj-a/)
+  assert.ok(calls.some((c) => c.sessionId === 'sa') && calls.some((c) => c.sessionId === 'sb'))
 })
 
-test('home 未知 → 不抛错（空态）', async () => {
+test('没有已接入工程 → 空态（显示接入命令）', async () => {
   const react = createReactStub()
-  const { page } = mount(react, { files: {}, home: undefined })
+  const { page } = mount(react, { sessions: [session('s1', 'E:/proj-x', 1000)], files: {} })
+  const text = collectText(await react.render(page, {})).join(' ')
+  assert.match(text, /还没有已接入的工程/)
+  assert.match(text, /loop-state\.ps1 -Action init/)
+})
+
+test('会话列表为空 → 空态 + 诊断说明需要会话', async () => {
+  const react = createReactStub()
+  const { page } = mount(react, { sessions: [] })
+  const text = collectText(await react.render(page, {})).join(' ')
+  assert.match(text, /还没有已接入的工程/)
+  assert.match(text, /还没有任何会话/)
+})
+
+test('session.list 抛错 → 空态不崩', async () => {
+  const react = createReactStub()
+  const { page } = mount(react, { listThrows: true })
   const text = collectText(await react.render(page, {})).join(' ')
   assert.match(text, /还没有已接入的工程/)
 })
 
-test('connection 抛错 → 不崩（空态）', async () => {
+test('workspaceFiles.read 抛错 → 空态不崩', async () => {
   const react = createReactStub()
-  const { page } = mount(react, { fetchThrows: true, home: 'C:/home' })
+  const { page } = mount(react, { sessions: [session('s1', 'E:/proj-y', 1)], readThrows: true })
+  const text = collectText(await react.render(page, {})).join(' ')
+  assert.match(text, /还没有已接入的工程/)
+})
+
+test('无 remote 服务 → 空态 + 诊断（不抛错）', async () => {
+  const react = createReactStub()
+  const api = loadClient(react)
+  let page
+  api.apply({
+    get() { return undefined },
+    slots: { inject(owner, cb) { cb() }, register(options, component) { if (options.name === 'main') page = component } },
+  })
   const text = collectText(await react.render(page, {})).join(' ')
   assert.match(text, /还没有已接入的工程/)
 })

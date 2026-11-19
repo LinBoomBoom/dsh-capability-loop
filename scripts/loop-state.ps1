@@ -32,12 +32,13 @@ param(
     [string]$Owner = '',
     [string]$Due = '',
     [int]$ShadowTarget = 3,
-    [string]$SkillVersion = '2.11.0',
+    [string]$SkillVersion = '2.12.0',
     [switch]$Force,
     [switch]$Json
 )
 
 $ErrorActionPreference = 'Stop'
+$Script:SkillVersion = $SkillVersion
 Set-StrictMode -Version 2.0
 
 function Now-Iso {
@@ -126,6 +127,9 @@ function Update-Digest {
 
 function Save-State {
     param($State, [string]$Path)
+    # 每次写入都把 skillVersion 对齐到当前脚本版本，避免面板显示 init 时的旧版本。
+    if ($null -ne $State.PSObject.Properties['skillVersion']) { $State.skillVersion = $Script:SkillVersion }
+    else { $State | Add-Member -MemberType NoteProperty -Name skillVersion -Value $Script:SkillVersion }
     $State.updatedAt = Now-Iso
     Update-Digest -State $State
     Write-JsonFile -Path $Path -Object $State

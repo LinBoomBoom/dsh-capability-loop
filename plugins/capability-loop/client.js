@@ -125,68 +125,175 @@ window.__ModuleLoader__.load({
     }
 
     // ---------- 数据 ----------
+    // 主通道：`ctx.remote.session.list` 拿会话（含 cwd）→ `workspaceFiles.read(sessionId, 相对路径)`
+    // 读 `<cwd>/.dsh/loop/{project,state}.json`。相对路径自动落在该会话的工作区根，
+    // 因此不需要知道 DSH home，也不需要 `/api/file`（桌面壳的渲染器不是 http 源，走不通）。
+    // 备通道：浏览器里若 `connection.fetch` 存在，退回 `/api/file?path=`。
+    let lastDiagnostic = ''
+    function recordDiagnostic(text) {
+      const value = String(text || '')
+      if (value !== '') lastDiagnostic = value
+    }
+
+    function unwrap(result) {
+      if (result === null || result === undefined) return undefined
+      if (typeof result === 'object' && 'ok' in result) return result.ok === true ? result.value : undefined
+      return result
+    }
+
     function joinPath(base, rel) {
       const trimmed = String(base).replace(/[\\/]+$/, '')
       return trimmed.replace(/\\/g, '/') + '/' + rel
     }
 
-    async function readJson(ctx, absPath) {
-      const connection = ctx.get('connection')
-      if (connection === undefined) return null
-      const peer = connection.browserPeer
-      let response
+    /** 用某个会话的身份读工作区相对路径；读不到返回 null。 */
+    async function readJsonViaSession(filesNamespace, sessionId, relPath) {
+      let result
       try {
-        response = await connection.fetch('/api/file?path=' + encodeURIComponent(absPath), peer)
-      } catch {
+        result = await filesNamespace.read(sessionId, relPath, {}, undefined)
+      } catch (error) {
+        recordDiagnostic('workspaceFiles.read 抛错（' + relPath + '）：' + String(error && error.message ? error.message : error))
         return null
       }
-      if (response === undefined || response === null || !response.ok) return null
-      let text = ''
+      const value = unwrap(result)
+      if (value === undefined || typeof value.text !== 'string') return null
       try {
-        text = await response.text()
+        return JSON.parse(value.text)
       } catch {
-        return null
-      }
-      try {
-        return JSON.parse(text)
-      } catch {
+        recordDiagnostic('非 JSON：' + relPath)
         return null
       }
     }
 
-    /** 收集所有「已接入」工程的状态；按最近更新排序。 */
-    async function collect(ctx) {
-      const remote = ctx.get('remote')
-      const home = remote !== undefined && remote !== null && remote.$host !== undefined
-        ? remote.$host.home
-        : undefined
-      if (home === undefined || home === null || home === '') {
-        return { projects: [], homeKnown: false }
+    /** 备通道：/api/file?path=（仅当 connection.fetch 存在，例如普通浏览器载体）。 */
+    async function readJsonViaFileApi(ctx, absPath) {
+      const connection = ctx.get('connection')
+      if (connection === undefined || connection === null || typeof connection.fetch !== 'function') return null
+      const peer = connection.browserPeer
+      const query = '/api/file?path=' + encodeURIComponent(absPath)
+      const candidates = [query]
+      try {
+        const origin = typeof location !== 'undefined' && location.origin ? location.origin : ''
+        if (origin !== '' && origin !== 'null' && origin.indexOf('http') === 0) {
+          candidates.push(origin.replace(/\/+$/, '') + query)
+        }
+      } catch {
+        // 没有 location 就只走相对路径
       }
-      const workspaceFile = await readJson(ctx, joinPath(home, 'storages/workspace.json'))
-      const table = workspaceFile !== null && workspaceFile.tables !== undefined
-        ? workspaceFile.tables.workspaces
-        : undefined
-      const workspaces = []
-      if (table !== undefined && table !== null && typeof table === 'object') {
-        for (const id of Object.keys(table)) {
-          const row = table[id]
-          if (row === null || row === undefined || typeof row.path !== 'string') continue
-          workspaces.push({ id, path: row.path, title: typeof row.title === 'string' ? row.title : row.path, updatedAt: String(row.updatedAt || '') })
+      for (const url of candidates) {
+        let response
+        try {
+          response = await connection.fetch(url, peer)
+        } catch (error) {
+          recordDiagnostic('fetch 抛错 ' + url + '：' + String(error && error.message ? error.message : error))
+          continue
+        }
+        if (response === undefined || response === null || !response.ok) {
+          recordDiagnostic('HTTP ' + (response === undefined || response === null ? '?' : response.status) + ' ' + url)
+          continue
+        }
+        try {
+          return JSON.parse(await response.text())
+        } catch (error) {
+          recordDiagnostic('响应不是 JSON：' + String(error && error.message ? error.message : error))
         }
       }
-      workspaces.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
-
-      const projects = []
-      for (const workspace of workspaces.slice(0, 12)) {
-        const project = await readJson(ctx, joinPath(workspace.path, '.dsh/loop/project.json'))
-        if (project === null) continue
-        const state = await readJson(ctx, joinPath(workspace.path, '.dsh/loop/state.json'))
-        projects.push({ workspace, project, state })
-      }
-      return { projects, homeKnown: true }
+      return null
     }
 
+    /** 收集所有「已接入」工程；按会话最近使用排序。 */
+    async function collect(ctx) {
+      const remote = ctx.get('remote')
+      const sessionNamespace = remote !== undefined && remote !== null ? remote.session : undefined
+      const filesNamespace = remote !== undefined && remote !== null ? remote.workspaceFiles : undefined
+
+      if (sessionNamespace === undefined || typeof sessionNamespace.list !== 'function'
+        || filesNamespace === undefined || typeof filesNamespace.read !== 'function') {
+        recordDiagnostic('当前 composition 没有 remote.session / remote.workspaceFiles，面板暂时读不到状态')
+        return { projects: [] }
+      }
+
+      let listResult
+      try {
+        listResult = await sessionNamespace.list({})
+      } catch (error) {
+        recordDiagnostic('session.list 失败：' + String(error && error.message ? error.message : error))
+        return { projects: [] }
+      }
+      const listed = unwrap(listResult)
+      const items = listed !== undefined && Array.isArray(listed.items) ? listed.items : []
+      if (items.length === 0) {
+        recordDiagnostic('还没有任何会话（面板需要一个会话作为读取凭据）')
+        return { projects: [] }
+      }
+
+      // 每个工作区取最近的一个会话作为读取凭据
+      const byWorkspace = new Map()
+      for (const item of items) {
+        if (item === null || item === undefined) continue
+        const cwd = typeof item.cwd === 'string' && item.cwd !== '' ? item.cwd : ''
+        if (cwd === '') continue
+        const previous = byWorkspace.get(cwd)
+        const stamp = typeof item.updatedAt === 'number' ? item.updatedAt : 0
+        if (previous === undefined || stamp > previous.stamp) {
+          byWorkspace.set(cwd, { cwd, sessionId: item.sessionId, stamp })
+        }
+      }
+      const workspaces = Array.from(byWorkspace.values()).sort((a, b) => b.stamp - a.stamp).slice(0, 12)
+
+      const projects = []
+      for (const workspace of workspaces) {
+        const project = await readJsonViaSession(filesNamespace, workspace.sessionId, '.dsh/loop/project.json')
+        if (project === null) continue
+        const state = await readJsonViaSession(filesNamespace, workspace.sessionId, '.dsh/loop/state.json')
+        projects.push({
+          workspace: { id: workspace.cwd, path: workspace.cwd, title: typeof project.name === 'string' && project.name !== '' ? project.name : workspace.cwd },
+          project,
+          state,
+        })
+      }
+      if (projects.length === 0 && lastDiagnostic === '') {
+        recordDiagnostic('读了 ' + workspaces.length + ' 个工作区，都没有 .dsh/loop/project.json（未接入）')
+      }
+      return { projects }
+    }
+
+    /** 备通道入口：把工作区列表换成 state（仅在 remote.session 不可用时使用）。 */
+    async function collectViaFileApi(ctx) {
+      const remote = ctx.get('remote')
+      const home = remote !== undefined && remote !== null && remote.$host !== undefined ? remote.$host.home : undefined
+      if (typeof home !== 'string' || home === '') {
+        recordDiagnostic('拿不到 Host home，无法定位 workspace.json')
+        return { projects: [] }
+      }
+      const workspaceFile = await readJsonViaFileApi(ctx, joinPath(home, 'storages/workspace.json'))
+      const table = workspaceFile !== null && workspaceFile.tables !== undefined ? workspaceFile.tables.workspaces : undefined
+      if (table === undefined || table === null || typeof table !== 'object') return { projects: [] }
+      const rows = []
+      for (const id of Object.keys(table)) {
+        const row = table[id]
+        if (row === null || row === undefined || typeof row.path !== 'string') continue
+        rows.push({ id, path: row.path, title: typeof row.title === 'string' ? row.title : row.path, updatedAt: String(row.updatedAt || '') })
+      }
+      rows.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+      const projects = []
+      for (const workspace of rows.slice(0, 12)) {
+        const project = await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/project.json'))
+        if (project === null) continue
+        const state = await readJsonViaFileApi(ctx, joinPath(workspace.path, '.dsh/loop/state.json'))
+        projects.push({ workspace, project, state })
+      }
+      return { projects }
+    }
+
+    async function collectAny(ctx) {
+      const remote = ctx.get('remote')
+      const hasSessionRemote = remote !== undefined && remote !== null
+        && remote.session !== undefined && typeof remote.session.list === 'function'
+        && remote.workspaceFiles !== undefined && typeof remote.workspaceFiles.read === 'function'
+      if (hasSessionRemote) return collect(ctx)
+      return collectViaFileApi(ctx)
+    }
     function stageIndexOf(state) {
       const stage = state !== null && state !== undefined && typeof state.stage === 'string' ? state.stage : 'INTAKE'
       const index = STAGE_ORDER.indexOf(stage)
@@ -347,6 +454,8 @@ window.__ModuleLoader__.load({
           '在任意工程根跑一次接入命令，这里就会显示档位、阶段、门禁与阻断：'),
         h('code', { style: { ...S.mono, background: 'var(--dsw-alias-bg-layer-2)', padding: '8px 10px', borderRadius: 6 } },
           'loop-state.ps1 -Action init -Root <工程根> -ProjectName <名称>'),
+        h('div', { style: { ...S.meta, marginTop: 4 } },
+          '读取诊断：' + (props.diagnostic === '' ? '未发生错误（只是没找到已标记工程）' : props.diagnostic)),
         props.onRefresh ? h('button', { style: S.btn, onClick: props.onRefresh, type: 'button' }, '重新扫描') : null,
       )
     }
@@ -368,7 +477,7 @@ window.__ModuleLoader__.load({
           setView({ status: 'error', projects: [], error: 'no context' })
           return
         }
-        collect(source).then(
+        collectAny(source).then(
           (data) => setView({ status: 'ready', projects: data.projects, error: null }),
           (error) => setView({ status: 'error', projects: [], error: String(error && error.message ? error.message : error) }),
         )
@@ -389,7 +498,7 @@ window.__ModuleLoader__.load({
         ))
       }
       if (view.projects.length === 0) {
-        return h('div', { style: S.page }, h('div', { style: S.inner }, h(EmptyView, { onRefresh: load })))
+        return h('div', { style: S.page }, h('div', { style: S.inner }, h(EmptyView, { onRefresh: load, diagnostic: lastDiagnostic })))
       }
       const index = selected < view.projects.length ? selected : 0
       const current = view.projects[index]
@@ -419,7 +528,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'connection', 'remote'],
+      inject: ['slots', 'connection', 'remote', 'remote.session', 'remote.workspaceFiles'],
       apply(ctx) {
         pluginCtx = ctx
         ctx.slots.inject('main', () => ctx.slots.register({
