@@ -105,7 +105,8 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 
 | 动作 | 命令 |
 |---|---|
-| 门禁 | `run gate kind=design\|requirement\|test\|auto [taskDir=…] [grill=1]` |
+| 门禁 | `run gate kind=design\|requirement\|test\|all taskDir=<必填> [grill=1]` |
+| 环境验收 | `run env`（等价 `loop-gate -Environment`，不需要 taskDir） |
 | 能力体检 | `run audit` |
 | 交接体检 | `run handoff-audit slug=<slug> [workspace=…]` |
 | 模块/路由预检 | `run preflight keyword=<词> [alias=a b]` |

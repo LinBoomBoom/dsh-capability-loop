@@ -354,6 +354,21 @@ if (Test-Path -LiteralPath $Source) {
     Add-R 'H 自身' '更新检查' 'SKIP' '无源目录（独立分发副本，无法对比）'
 }
 
+# PowerShell 脚本必须 UTF-8 带 BOM：PS 5.1 读无 BOM 的中文会按 ANSI 解，脚本直接语法错。
+$psScripts = @(Get-ChildItem -LiteralPath (Join-Path $Workspace 'scripts') -File -Filter '*.ps1' -ErrorAction SilentlyContinue)
+if ($psScripts.Count -gt 0) {
+    $missingBom = @()
+    foreach ($psFile in $psScripts) {
+        $bytes = [System.IO.File]::ReadAllBytes($psFile.FullName)
+        if (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) { $missingBom += $psFile.Name }
+    }
+    if ($missingBom.Count -eq 0) {
+        Add-R 'H 自身' 'PowerShell BOM' 'PASS' ([string]$psScripts.Count + ' 个脚本均带 BOM')
+    } else {
+        Add-R 'H 自身' 'PowerShell BOM' 'FAIL' ('缺 BOM（PS 5.1 中文会乱码）：' + ($missingBom -join ', '))
+    }
+}
+
 # ---------------- I. 动态漂移（对比上次体检） ----------------
 $stateDir = Join-Path $Workspace '.tmp\capability-loop'
 $stateFile = Join-Path $stateDir 'audit-state.json'

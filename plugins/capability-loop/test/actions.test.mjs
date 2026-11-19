@@ -111,6 +111,37 @@ test('audit：带 -Workspace', async () => {
   assert.deepEqual(argv.slice(argv.indexOf('-Workspace'), argv.indexOf('-Workspace') + 2), ['-Workspace', WS])
 })
 
+test('env：走 loop-gate.ps1 -Environment（不需要 taskDir）', async () => {
+  const record = []
+  const out = await executeAction(makeCtx(record), CFG, 'run env')
+  assert.equal(out.ok, true)
+  const argv = record[0].argv
+  assert.ok(argv.some((a) => a.endsWith('loop-gate.ps1')))
+  assert.ok(argv.includes('-Environment'))
+  assert.equal(argv.includes('-TaskDir'), false)
+})
+
+test('gate：taskDir 支持中文与空格（引号解析后原样进 argv）', async () => {
+  const record = []
+  await executeAction(makeCtx(record), CFG, 'run gate kind=design taskDir="设计 文档"')
+  const argv = record[0].argv
+  assert.deepEqual(argv.slice(argv.indexOf('-TaskDir'), argv.indexOf('-TaskDir') + 2), ['-TaskDir', '设计 文档'])
+})
+
+test('gate：kind=all 允许', async () => {
+  const record = []
+  await executeAction(makeCtx(record), CFG, 'run gate kind=all taskDir=docs')
+  const argv = record[0].argv
+  assert.deepEqual(argv.slice(argv.indexOf('-Kind'), argv.indexOf('-Kind') + 2), ['-Kind', 'all'])
+})
+
+test('gate：taskDir 以 - 开头被拒绝（避免被 PowerShell 当参数）', async () => {
+  const record = []
+  await executeAction(makeCtx(record), CFG, 'run gate kind=design taskDir=-force')
+  const argv = record[0].argv
+  assert.equal(argv.includes('-TaskDir'), false)
+})
+
 test('mode：走 loop-state.ps1 -Action set-mode', async () => {
   const record = []
   const out = await executeAction(makeCtx(record), CFG, 'mode on')

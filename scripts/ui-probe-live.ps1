@@ -1,4 +1,4 @@
-# Live UI probe: reload the desktop window, open the "capability-loop" sidebar panel, screenshot.
+﻿# Live UI probe: reload the desktop window, open the "capability-loop" sidebar panel, screenshot.
 # Saves screenshots under docs/design/ (workspace, .tmp is ACL-restricted on this machine).
 param(
   [string]$Before = 'E:\dsh-capability-loop\docs\design\panel-live-before.png',

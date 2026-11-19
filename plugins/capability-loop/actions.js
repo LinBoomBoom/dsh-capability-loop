@@ -16,6 +16,7 @@ import path from 'node:path'
 const ACTIONS = {
   audit: { kind: 'ps', script: 'capability-audit.ps1', timeoutMs: 180000, label: '能力体检' },
   gate: { kind: 'ps', script: 'loop-gate.ps1', timeoutMs: 180000, label: '门禁' },
+  env: { kind: 'ps', script: 'loop-gate.ps1', timeoutMs: 180000, label: '环境验收' },
   'handoff-audit': { kind: 'py', script: 'handoff-audit.py', timeoutMs: 120000, label: '交接体检' },
   preflight: { kind: 'py', script: 'module-preflight.py', timeoutMs: 120000, label: '模块预检' },
   pack: { kind: 'ps', script: 'package-skill.ps1', timeoutMs: 240000, label: '上架打包' },
@@ -34,12 +35,26 @@ function clip(text, max) {
   return value.slice(0, Math.max(0, max - 12)) + '…（已截断）'
 }
 
-/** 只接受安全字符：字母数字、点、短横、下划线、斜杠、反斜杠、冒号（盘符）。 */
+/** 命令名/商店 handle：只接受 ASCII 安全字符。 */
 function safeToken(value) {
   const text = String(value === undefined || value === null ? '' : value).trim()
   if (text === '') return ''
   if (!/^[A-Za-z0-9._\-\/\\:]+$/.test(text)) return ''
   if (text.includes('..')) return ''
+  return text
+}
+
+/**
+ * 路径类参数（taskDir / workspace / out）：允许中文、空格、盘符，但拒绝控制字符、
+ * `..` 与以 `-` 开头（避免被 PowerShell 当参数）。argv 传参不拼 shell，所以不需要
+ * 限制到 ASCII——中文工程目录（如「气量平衡月表」）必须能用。
+ */
+function safePath(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim()
+  if (text === '') return ''
+  if (/[\u0000-\u001f]/.test(text)) return ''
+  if (text.includes('..')) return ''
+  if (text.charAt(0) === '-') return ''
   return text
 }
 
@@ -58,7 +73,7 @@ async function resolveSkillDir(ctx, cwd, configured) {
     try {
       const target = await fsService.resolve(candidate, { cwd })
       const info = await fsService.stat(target)
-      if (info !== undefined && info.type === 'directory') return candidate
+      if (info !== undefined && info.type === 'directory') return target.path || candidate
     } catch {
       // 继续试下一个
     }
@@ -165,9 +180,13 @@ function parseRequest(rawInput) {
     rest = rest.slice(1)
   }
   const args = {}
-  for (const part of rest) {
-    const eq = part.indexOf('=')
-    if (eq > 0) args[part.slice(0, eq)] = part.slice(eq + 1)
+  // 关键值可用引号包住（路径里有空格）：taskDir="docs/my design"
+  const joined = rest.join(' ')
+  const pattern = /([A-Za-z][A-Za-z0-9-]*)=("([^"]*)"|'([^']*)'|(\S+))/g
+  let match
+  while ((match = pattern.exec(joined)) !== null) {
+    const value = match[3] !== undefined ? match[3] : (match[4] !== undefined ? match[4] : match[5])
+    args[match[1]] = value
   }
   // 位置参数：`mode on` 这种写法
   if (action === 'mode' && args.value === undefined && rest.length > 0 && rest[0].indexOf('=') === -1) {
@@ -180,7 +199,8 @@ function usageText() {
   return [
     '用法：/capability-loop <动作> [key=value …]',
     '',
-    '  run gate kind=design|requirement|test|all taskDir=<相对目录> [grill=1]   门禁',
+    '  run gate kind=design|requirement|test|all taskDir=<必填> [grill=1]     门禁',
+    '  run env                                                              环境验收（等价 -Environment）',
     '  run audit                                                             九组体检',
     '  run handoff-audit slug=<slug> [workspace=<路径>]                       交接包体检',
     '  run preflight keyword=<词> alias=<英文别名>                            模块/路由预检',
@@ -245,13 +265,15 @@ export async function executeAction(ctx, cfg, rawInput, signal) {
     const psArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]
     if (action === 'audit') {
       psArgs.push('-Workspace', cwd)
+    } else if (action === 'env') {
+      psArgs.push('-Environment')
     } else if (action === 'gate') {
       const kind = String(parsed.args.kind || 'auto').trim()
       if (kind !== 'auto' && GATE_KINDS.indexOf(kind) === -1) {
         return { ok: false, text: 'gate 的 kind 只能是 auto|design|requirement|test|all' }
       }
       psArgs.push('-Workspace', cwd, '-Kind', kind)
-      const taskDir = safeToken(parsed.args.taskDir || '')
+      const taskDir = safePath(parsed.args.taskDir || '')
       if (taskDir !== '') psArgs.push('-TaskDir', taskDir)
       if (parsed.args.grill === '1' || parsed.args.grill === 'true') psArgs.push('-RequireGrill')
     } else if (action === 'pack') {
@@ -259,7 +281,7 @@ export async function executeAction(ctx, cfg, rawInput, signal) {
       if (handle === '') return { ok: false, text: 'pack 的 handle 含非法字符' }
       psArgs.push('-SkillRoot', skillDir, '-Handle', handle, '-Slug', 'dsh-capability-loop')
     } else if (action === 'visual') {
-      const out = safeToken(parsed.args.out || path.join(cwd, '.tmp', 'visual-qa'))
+      const out = safePath(parsed.args.out || path.join(cwd, '.tmp', 'visual-qa'))
       if (out === '') return { ok: false, text: 'visual 的 out 含非法字符' }
       psArgs.push('-OutDir', out)
     } else if (action === 'skill-status') {
@@ -271,12 +293,12 @@ export async function executeAction(ctx, cfg, rawInput, signal) {
     if (action === 'handoff-audit') {
       const slug = safeToken(parsed.args.slug || '')
       if (slug === '') return { ok: false, text: 'handoff-audit 需要 slug=<目录名>' }
-      pyArgs.push('--workspace', safeToken(parsed.args.workspace || cwd) || cwd, '--slug', slug)
+      pyArgs.push('--workspace', safePath(parsed.args.workspace || cwd) || cwd, '--slug', slug)
     } else if (action === 'preflight') {
       const keyword = String(parsed.args.keyword || '').trim()
       const aliases = String(parsed.args.alias || '').trim().split(/\s+/).filter(Boolean)
       if (keyword === '') return { ok: false, text: 'preflight 需要 keyword=<模块名关键词>' }
-      pyArgs.push('--project', safeToken(parsed.args.project || cwd) || cwd, '--keyword', keyword)
+      pyArgs.push('--project', safePath(parsed.args.project || cwd) || cwd, '--keyword', keyword)
       if (aliases.length > 0) pyArgs.push('--alias', ...aliases)
     }
     argv = { executable: cfg.pythonExecutable || 'python', argv: pyArgs }

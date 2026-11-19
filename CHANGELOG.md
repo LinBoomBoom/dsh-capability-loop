@@ -2,6 +2,34 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.13.3 — 2026-11-19（一轮自查：修 6 个真问题 + 4 处体验）
+
+**修的真问题**
+1. `taskDir` 含中文/空格时被 `safeToken` 静默丢弃（「气量平衡月表」这类中文目录跑不了门禁/预检）→ 改 `safePath`（允许中文/空格，仍禁 `..` 与开头 `-`）+ 命令值引号解析。
+2. `resolveSkillDir` 返回配置原值（可能是相对路径）→ 子进程按错误 cwd 解析脚本；改为返回解析后的绝对路径。
+3. 命令 handler 拿不到会话 `cwd` 时回退 `process.cwd()`（应用目录）——会把门禁/打包跑错工程；改为明确报错并提示填 `workspaceRoot`。
+4. 门禁没填 `taskDir` 时仍会发命令 → loop-gate 只回「没有可执行的门禁」，像坏了；改为禁用运行键 + 提示，并新增「环境验收」（`run env`）。
+5. 动作完成后的 `load()` 可能重排工程列表，按索引选中的工程会跳；改按**工程路径**选中并持久化（刷新回到上次看的工程）。
+6. 取消后迟到的命令结果会覆盖「已取消」；`settle` 增加 controller 归属判断后再写结果。
+
+**体验**
+- 最近一次运行 / 正在运行 卡片带工程名 chip；确认框显示「名称（路径）」。
+- `taskDir` **按工程记忆**（localStorage），切换工程不会带错目录；门禁行支持回车直接弹确认。
+- 当前档位按钮禁用（不再弹出“切到当前档位”）；头部「只读」改为「状态只读 · 动作走会话命令」。
+- 长阻断文本自动换行，不再挤掉 owner/due；`taskDir` 为空时按钮旁直接给黄色提示。
+
+**工程护栏**
+- `capability-audit.ps1` / `package-skill.ps1` 新增 **PowerShell BOM 检查**：`scripts/*.ps1` 缺 UTF-8 BOM 直接 FAIL（PS 5.1 读无 BOM 中文会乱码到脚本解析失败——本轮自查时就复现了一次）。首次运行即抓出 `ui-probe-live.ps1` 缺 BOM，已补。
+
+**验证**
+- `node --check`（client / actions / index）→ 0。
+- 夹具 **54/54**：actions 21 + client 18 + takeover 14 + fallback 1。
+- 真机 `loop-gate -TaskDir "能力 闭环-任务目录"`（中文+空格路径）→ PASS，证明 argv/引号链路可用。
+- `package-skill` → 78 条目、10 个脚本 BOM 全 PASS、WARN=0。
+- 真机视觉/点击复验仍未做（前台被其他应用占用，未做 UI 自动化）。
+
+**回滚**：`git revert` 本提交。
+
 ## v2.13.2 — 2026-11-19（工程归属：每张卡片都标工程名，切换即重读）
 
 **反馈**（用户）：阻断项有了，但看不出是哪个工程的；多个工程切换时内容会不会跟着换？

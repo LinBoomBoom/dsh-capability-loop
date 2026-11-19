@@ -103,11 +103,11 @@ function makeCtx(cwd, fsOverride) {
   }
 }
 
-function makeAgent() {
+function makeAgent(cwd) {
   const events = []
   return {
     session: {
-      header: { id: 'sess-1' },
+      header: cwd === undefined ? { id: 'sess-1' } : { id: 'sess-1', cwd },
       surface: { nodes: [] },
       eventAt(seq) { return events[seq] },
     },
@@ -294,30 +294,41 @@ test('命令通道：注册 capability-loop，带输入提示', async () => {
 })
 
 test('命令通道：空输入给用法；未知动作、缺 subprocess 都回 error 文本', async () => {
-  const ctx = makeCtx(makeWorkspace({}))
+  const cwd = makeWorkspace({})
+  const ctx = makeCtx(cwd)
   apply(ctx, {})
   const definition = ctx.registered[0]
 
-  const usage = await definition.handler({ agent: makeAgent(), rawInput: '' })
+  const usage = await definition.handler({ agent: makeAgent(cwd), rawInput: '' })
   assert.equal(usage.kind, 'success')
   assert.match(usage.text, /用法/)
 
-  const unknown = await definition.handler({ agent: makeAgent(), rawInput: 'rm -rf /' })
+  const unknown = await definition.handler({ agent: makeAgent(cwd), rawInput: 'rm -rf /' })
   assert.equal(unknown.kind, 'error')
   assert.match(unknown.text, /未知动作/)
 
-  const noSubprocess = await definition.handler({ agent: makeAgent(), rawInput: 'run audit' })
+  const noSubprocess = await definition.handler({ agent: makeAgent(cwd), rawInput: 'run audit' })
   assert.equal(noSubprocess.kind, 'error')
   assert.match(noSubprocess.text, /ctx\.subprocess/)
 })
 
-test('命令通道：aborted 信号回「已取消」', async () => {
+test('命令通道：拿不到会话 cwd 时不猜进程目录，直接报错', async () => {
   const ctx = makeCtx(makeWorkspace({}))
+  apply(ctx, {})
+  const definition = ctx.registered[0]
+  const out = await definition.handler({ agent: makeAgent(), rawInput: 'run audit' })
+  assert.equal(out.kind, 'error')
+  assert.match(out.text, /拿不到会话工作目录/)
+})
+
+test('命令通道：aborted 信号回「已取消」', async () => {
+  const cwd = makeWorkspace({})
+  const ctx = makeCtx(cwd)
   apply(ctx, {})
   const definition = ctx.registered[0]
   const controller = new AbortController()
   controller.abort()
-  const out = await definition.handler({ agent: makeAgent(), rawInput: 'run audit', signal: controller.signal })
+  const out = await definition.handler({ agent: makeAgent(cwd), rawInput: 'run audit', signal: controller.signal })
   assert.equal(out.kind, 'error')
   assert.match(out.text, /已取消/)
 })

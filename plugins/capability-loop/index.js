@@ -424,6 +424,13 @@ export function apply(ctx, config) {
       input: { hint: 'run gate kind=design taskDir=docs/design | mode on' },
       handler: async ({ agent, rawInput, signal }) => {
         const root = cfg.workspaceRoot !== '' ? cfg.workspaceRoot : cwdOf(agent)
+        if (root === '') {
+          return {
+            kind: 'error',
+            text: '拿不到会话工作目录：请在 Plugin 配置里填 workspaceRoot，或在一个有工作区的会话里执行。'
+              + '（不猜进程 cwd，避免把门禁/打包跑错工程）',
+          }
+        }
         const outcome = await executeAction(ctx, { ...cfg, workspaceRoot: root }, rawInput, signal)
         if (signal !== undefined && signal.aborted) return { kind: 'error', text: '已取消' }
         return { kind: outcome.ok ? 'success' : 'error', text: outcome.text }
@@ -432,10 +439,10 @@ export function apply(ctx, config) {
   })
 }
 
-/** 取会话工作目录（命令 handler 只有 agent）。 */
+/** 取会话工作目录（命令 handler 只有 agent）；拿不到返回 ''（不猜进程 cwd）。 */
 function cwdOf(agent) {
   const session = agent !== undefined && agent !== null ? agent.session : undefined
   const header = session !== undefined && session !== null ? session.header : undefined
   const cwd = header !== undefined && header !== null && typeof header.cwd === 'string' ? header.cwd : ''
-  return cwd !== '' ? cwd : process.cwd()
+  return cwd
 }

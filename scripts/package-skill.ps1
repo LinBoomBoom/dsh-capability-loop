@@ -84,6 +84,18 @@ $cl = Read-Utf8 (Join-Path $SkillRoot 'CHANGELOG.md')
 if ($version -ne '' -and $cl -match ('## v' + [regex]::Escape($version))) { Add-I 'PASS' 'CHANGELOG 条目' ('包含 v' + $version) }
 else { Add-I 'WARN' 'CHANGELOG 条目' ('未找到 v' + $version + ' 的条目（建议补）') }
 
+# 3) scripts/*.ps1 必须 UTF-8 带 BOM（否则 PS 5.1 中文乱码、脚本解析失败）
+$psFiles = @(Get-ChildItem -LiteralPath (Join-Path $SkillRoot 'scripts') -File -Filter '*.ps1' -ErrorAction SilentlyContinue)
+if ($psFiles.Count -gt 0) {
+    $noBom = @()
+    foreach ($psFile in $psFiles) {
+        $bytes = [System.IO.File]::ReadAllBytes($psFile.FullName)
+        if (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) { $noBom += $psFile.Name }
+    }
+    if ($noBom.Count -eq 0) { Add-I 'PASS' 'PowerShell BOM' ([string]$psFiles.Count + ' 个脚本均带 BOM') }
+    else { Add-I 'FAIL' 'PowerShell BOM' ('缺 BOM（PS 5.1 会乱码）：' + ($noBom -join ', ')) }
+}
+
 # 4) 敏感信息/本机路径扫描（只报不阻断，人工确认）
 # 只匹配「像真实凭证」的赋值；文档里的 $env:FAKE_API_KEY='dummy-local-key' 等示例不报。
 $badPatterns = @(

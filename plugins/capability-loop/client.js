@@ -443,6 +443,14 @@ window.__ModuleLoader__.load({
         + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
     }
 
+    /** 命令值里有空格/引号时用双引号包起来（Host 侧解析器支持引号）。 */
+    function quoteArg(value) {
+      const text = String(value === undefined || value === null ? '' : value).trim()
+      if (text === '') return ''
+      if (/[\s"']/.test(text)) return '"' + text.replace(/"/g, "'") + '"'
+      return text
+    }
+
     /**
      * 面板动作 → 会话命令行（不含 /capability-loop 前缀）。
      * 白名单与参数校验在 Host 半（plugins/capability-loop/actions.js），这里只拼文本。
@@ -450,31 +458,35 @@ window.__ModuleLoader__.load({
     function buildAction(key, fields) {
       const f = fields === undefined || fields === null ? {} : fields
       if (key === 'gate') {
-        const kind = f.gateKind || 'design'
+        const kind = f.gateKind || 'auto'
         const taskDir = String(f.taskDir || '').trim()
+        // 没有 taskDir 时 loop-gate 只会报「没有可执行的门禁」，所以这里不发空命令。
+        if (taskDir === '') return null
+        const grill = f.grill === true || f.grill === '1' || f.grill === 'true'
         return {
           key,
           label: '运行门禁（' + kind + '）',
-          line: 'run gate kind=' + kind + (taskDir !== '' ? ' taskDir=' + taskDir : ''),
+          line: 'run gate kind=' + kind + ' taskDir=' + quoteArg(taskDir) + (grill ? ' grill=1' : ''),
           note: '执行 loop-gate.ps1：结果写回 state.json；有 FAIL 时退出码非 0（不会改写结论）。',
         }
       }
-      if (key === 'audit') return { key, label: '能力体检', line: 'run audit', note: '九组只读体检，报告默认写到 .tmp/。' }
+      if (key === 'env') return { key, label: '环境验收', line: 'run env', note: '等价 loop-gate -Environment：只跑环境级验收，不需要 taskDir。' }
+      if (key === 'audit') return { key, label: '能力体检', line: 'run audit', note: '九组只读体检，报告默认写到 .tmp/（写不进时改用 %TEMP%）。' }
       if (key === 'handoff') {
         const slug = String(f.slug || '').trim()
         if (slug === '') return null
-        return { key, label: '交接包体检', line: 'run handoff-audit slug=' + slug, note: '材料可达性 / 证据对账 / 批次 / 网关前缀（exit 1 = 不得交）。' }
+        return { key, label: '交接包体检', line: 'run handoff-audit slug=' + quoteArg(slug), note: '材料可达性 / 证据对账 / 批次 / 网关前缀（exit 1 = 不得交）。' }
       }
       if (key === 'preflight') {
         const keyword = String(f.keyword || '').trim()
         if (keyword === '') return null
         const alias = String(f.alias || '').trim()
-        return { key, label: '模块/路由预检', line: 'run preflight keyword=' + keyword + (alias !== '' ? ' alias=' + alias : ''), note: 'EXISTS / WEAK 时必须先确认复用还是另建。' }
+        return { key, label: '模块/路由预检', line: 'run preflight keyword=' + quoteArg(keyword) + (alias !== '' ? ' alias=' + quoteArg(alias) : ''), note: 'EXISTS / WEAK 时必须先确认复用还是另建。' }
       }
       if (key === 'pack') {
         const handle = String(f.handle || '').trim()
         if (handle === '') return null
-        return { key, label: '上架打包', line: 'run pack handle=' + handle, note: '校验 frontmatter/version/CHANGELOG + manifest + SHA256 + ZIP。' }
+        return { key, label: '上架打包', line: 'run pack handle=' + quoteArg(handle), note: '校验 frontmatter/version/CHANGELOG + manifest + SHA256 + ZIP。' }
       }
       if (key === 'visual') return { key, label: '视觉验收探测', line: 'run visual', note: 'exit 2 = 权限受限，必须显式让用户选 A/B/C。' }
       if (key === 'skill-status') return { key, label: '版本检查', line: 'run skill-status' }
@@ -530,6 +542,11 @@ window.__ModuleLoader__.load({
         disabled: disabled || (extra !== undefined && extra.disabled === true),
         onClick: () => props.onRequest(key),
       }, label)
+      const enter = (key, allowed) => (event) => {
+        if (event.key !== 'Enter' || disabled || allowed === false) return
+        event.preventDefault()
+        props.onRequest(key)
+      }
       return h('div', { style: S.card },
         h('div', { style: S.cardHd }, '运行中心',
           props.projectName !== undefined ? h('span', { style: S.projectChip }, props.projectName) : null,
@@ -540,25 +557,44 @@ window.__ModuleLoader__.load({
           h('select', {
             style: S.select, value: f.gateKind || 'design', disabled,
             onChange: (event) => set('gateKind', event.target.value),
-          }, ['design', 'requirement', 'test', 'auto'].map((kind) => h('option', { key: kind, value: kind }, kind))),
+          }, ['design', 'requirement', 'test', 'all', 'auto'].map((kind) => h('option', { key: kind, value: kind }, kind))),
           h('input', {
-            style: S.input, placeholder: 'taskDir（可选，如 docs/design）', disabled,
+            style: S.input, placeholder: 'taskDir（必填，如 docs/design）', disabled,
             value: f.taskDir || '',
             onChange: (event) => set('taskDir', event.target.value),
+            onKeyDown: enter('gate', String(f.taskDir || '').trim() !== ''),
           }),
-          runBtn('gate', '运行门禁', { primary: true }),
+          h('label', {
+            style: { display: 'inline-flex', alignItems: 'center', gap: 5, ...S.meta, cursor: 'pointer' },
+            title: '把 grill 记录缺失当硬门（-RequireGrill）',
+          },
+            h('input', {
+              type: 'checkbox', checked: f.grill === true, disabled,
+              onChange: (event) => set('grill', event.target.checked),
+            }),
+            '含 grill'),
+          runBtn('gate', '运行门禁', {
+            primary: true,
+            disabled: String(f.taskDir || '').trim() === '',
+          }),
+          runBtn('env', '环境验收'),
+          String(f.taskDir || '').trim() === ''
+            ? h('span', { style: { ...S.meta, color: 'var(--dsw-alias-state-warn-primary)' } }, '先填 taskDir（门禁要一个任务目录）')
+            : null,
         ),
         h('div', { style: S.runRow },
           h('span', { style: S.name }, '交接体检'),
           h('input', {
             style: S.input, placeholder: 'slug（必填）', disabled, value: f.slug || '',
             onChange: (event) => set('slug', event.target.value),
+            onKeyDown: enter('handoff', String(f.slug || '').trim() !== ''),
           }),
           runBtn('handoff', '运行', { disabled: String(f.slug || '').trim() === '' }),
           h('span', { style: { ...S.name, width: 'auto', marginLeft: 10 } }, '模块预检'),
           h('input', {
             style: S.input, placeholder: 'keyword（必填）', disabled, value: f.keyword || '',
             onChange: (event) => set('keyword', event.target.value),
+            onKeyDown: enter('preflight', String(f.keyword || '').trim() !== ''),
           }),
           h('input', {
             style: S.input, placeholder: 'alias（可选，空格分隔）', disabled, value: f.alias || '',
@@ -571,6 +607,7 @@ window.__ModuleLoader__.load({
           h('input', {
             style: S.input, placeholder: 'handle（必填）', disabled, value: f.handle || '',
             onChange: (event) => set('handle', event.target.value),
+            onKeyDown: enter('pack', String(f.handle || '').trim() !== ''),
           }),
           runBtn('pack', '运行', { disabled: String(f.handle || '').trim() === '' }),
           h('span', { style: { ...S.name, width: 'auto', marginLeft: 10 } }, '只读动作'),
@@ -586,6 +623,7 @@ window.__ModuleLoader__.load({
       if (props.running === null || props.running === undefined) return null
       return h('div', { style: S.card },
         h('div', { style: S.cardHd }, '正在运行：' + props.running.label,
+          props.running.projectName !== undefined ? h('span', { style: S.projectChip }, props.running.projectName) : null,
           h('button', {
             type: 'button', style: { ...S.btn, marginLeft: 'auto' }, onClick: props.onCancelRun,
           }, '取消')),
@@ -599,6 +637,7 @@ window.__ModuleLoader__.load({
       return h('div', { style: S.card },
         h('div', { style: S.cardHd }, '最近一次运行',
           h(Badge, { status: result.ok ? 'PASS' : 'FAIL' }),
+          result.projectName !== undefined ? h('span', { style: S.projectChip }, result.projectName) : null,
           h('span', { style: S.hint },
             result.label + ' · ' + result.at + (typeof result.elapsed === 'number' ? ' · ' + result.elapsed + 's' : '')),
         ),
@@ -616,7 +655,7 @@ window.__ModuleLoader__.load({
         h('div', { style: S.modalBar }),
         h('h3', { style: S.modalHd }, '确认运行：' + pending.label),
         h('div', { style: S.modalBody },
-          h('div', null, '工程：' + pending.workspace),
+          h('div', null, '工程：' + (pending.projectName !== undefined ? pending.projectName + '（' + pending.workspace + '）' : pending.workspace)),
           h('div', { style: { marginTop: 10 } }, '命令：'),
           h('code', {
             style: {
@@ -678,15 +717,17 @@ window.__ModuleLoader__.load({
                 h('span', { style: S.dotsep }, '·'),
                 h('span', null, '更新于 ' + updated),
                 h('span', { style: S.dotsep }, '·'),
-                h('span', null, '只读'),
+                h('span', null, '状态只读 · 动作走会话命令'),
               ),
             ),
             h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flex: 'none' } },
               h('div', { style: S.seg },
                 [['on', '接管'], ['shadow', '影子'], ['off', '关闭']].map((pair) => h('button', {
                   key: pair[0], type: 'button',
+                  disabled: pair[0] === mode,
+                  title: pair[0] === mode ? '当前档位' : '切换到 ' + pair[0],
                   style: pair[0] === mode ? { ...S.segItem, ...S.segOn } : S.segItem,
-                  onClick: () => props.onRequest('mode', pair[0]),
+                  onClick: () => { if (pair[0] !== mode) props.onRequest('mode', pair[0]) },
                 }, pair[1]))),
               props.onRefresh ? h('button', { style: S.btn, onClick: props.onRefresh, type: 'button' }, '刷新') : null,
             ),
@@ -743,8 +784,8 @@ window.__ModuleLoader__.load({
             ? h('div', { style: { ...S.row, ...S.meta } }, '无阻断')
             : blockers.map((b, i) => h('div', { key: (b.id || 'b') + i, style: S.row },
               h('span', { style: S.badge }, b.id || 'D-?'),
-              h('span', { style: { ...S.meta, color: 'var(--dsw-alias-label-primary)' } }, b.text || ''),
-              h('span', { style: S.right }, (b.owner || '') + (b.due ? ' · ' + b.due : '')),
+              h('span', { style: { flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-primary)' } }, b.text || ''),
+              h('span', { style: { ...S.right, flex: 'none' } }, (b.owner || '') + (b.due ? ' · ' + b.due : '')),
             )),
           next !== undefined
             ? h('div', { style: { ...S.row, alignItems: 'flex-start' } },
@@ -775,6 +816,31 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 轻量记忆：刷新后回到上次看的工程 / 上次的 taskDir（存不了就只影响体验）。 */
+    const STORE_KEY = 'dsh-capability-loop:panel:v1'
+    function readStore(name, fallback) {
+      try {
+        if (typeof localStorage === 'undefined' || localStorage === null) return fallback
+        const raw = localStorage.getItem(STORE_KEY)
+        if (raw === null || raw === '') return fallback
+        const data = JSON.parse(raw)
+        return data !== null && typeof data === 'object' && data[name] !== undefined ? data[name] : fallback
+      } catch {
+        return fallback
+      }
+    }
+    function writeStore(name, value) {
+      try {
+        if (typeof localStorage === 'undefined' || localStorage === null) return
+        const raw = localStorage.getItem(STORE_KEY)
+        const data = raw !== null && raw !== '' ? JSON.parse(raw) : {}
+        data[name] = value
+        localStorage.setItem(STORE_KEY, JSON.stringify(data))
+      } catch {
+        // 隐私模式/禁用存储时静默降级
+      }
+    }
+
     function CapabilityLoopPage(props) {
       // ctx 由 apply() 注入（不猜 slot props 的形状）；props 仅作为兜底。
       const slot = props === undefined || props === null ? {} : props
@@ -784,8 +850,16 @@ window.__ModuleLoader__.load({
           ? slot.hookContext.ctx
           : slot.ctx)
       const [view, setView] = React.useState({ status: 'loading', projects: [], error: null })
-      const [selected, setSelected] = React.useState(0)
-      const [fields, setFields] = React.useState({ gateKind: 'design', taskDir: '', slug: '', keyword: '', alias: '', handle: '' })
+      const [selectedPath, setSelectedPath] = React.useState(() => String(readStore('projectPath', '') || ''))
+      const [fields, setFields] = React.useState(() => ({
+        gateKind: 'design',
+        taskDir: String(readStore(selectedPath !== '' ? 'taskDir:' + selectedPath : 'taskDir', '') || ''),
+        slug: '',
+        keyword: '',
+        alias: '',
+        handle: '',
+        grill: false,
+      }))
       const [pending, setPending] = React.useState(null)
       const [running, setRunning] = React.useState(null)
       const [result, setResult] = React.useState(null)
@@ -803,7 +877,9 @@ window.__ModuleLoader__.load({
       }, [services])
       React.useEffect(() => { load() }, [load])
 
-      const currentIndex = selected < view.projects.length ? selected : 0
+      // 选中的工程按**路径**记，不按索引——刷新/动作后工程顺序可能变，索引会指错。
+      const foundIndex = view.projects.findIndex((item) => item.workspace.path === selectedPath)
+      const currentIndex = foundIndex >= 0 ? foundIndex : 0
       const current = view.projects.length > 0 ? view.projects[currentIndex] : undefined
       const sessionId = current !== undefined && current.workspace !== undefined && typeof current.workspace.sessionId === 'string'
         ? current.workspace.sessionId
@@ -814,6 +890,10 @@ window.__ModuleLoader__.load({
           next[name] = value
           return next
         })
+        if (name === 'taskDir') {
+          // 每个工程记自己的 taskDir，切换工程时不会把 A 的目录带到 B
+          writeStore('taskDir:' + (current !== undefined ? current.workspace.path : ''), value)
+        }
       }
       const requestAction = (key, mode) => {
         if (current === undefined) return
@@ -822,11 +902,17 @@ window.__ModuleLoader__.load({
         if (sessionId === '') {
           setResult({
             label: request.label, line: request.line, ok: false, at: stampNow(),
+            projectName: current.workspace.title,
             text: '当前工程没有可用会话，动作需要会话凭据。',
           })
           return
         }
-        setPending({ ...request, workspace: current.workspace.path, sessionId })
+        setPending({
+          ...request,
+          workspace: current.workspace.path,
+          projectName: current.workspace.title,
+          sessionId,
+        })
       }
       const confirmPending = () => {
         const job = pending
@@ -835,13 +921,16 @@ window.__ModuleLoader__.load({
         const controller = new AbortController()
         activeController = controller
         const started = Date.now()
-        setRunning({ label: job.label, line: job.line })
+        setRunning({ label: job.label, line: job.line, projectName: job.projectName })
         const settle = (outcome) => {
-          if (activeController === controller) activeController = null
+          // 已被取消：不要再覆盖「已取消」结果
+          if (activeController !== controller) return
+          activeController = null
           setRunning(null)
           setResult({
             label: job.label, line: job.line, ok: outcome.ok, text: outcome.text,
             at: stampNow(), elapsed: Math.round((Date.now() - started) / 100) / 10,
+            projectName: job.projectName,
           })
           load()
         }
@@ -858,6 +947,7 @@ window.__ModuleLoader__.load({
           label: prev !== null && prev !== undefined ? prev.label : '运行',
           line: prev !== null && prev !== undefined ? prev.line : '',
           ok: false, text: '已取消。', at: stampNow(),
+          projectName: prev !== null && prev !== undefined ? prev.projectName : undefined,
         }))
       }
 
@@ -890,7 +980,14 @@ window.__ModuleLoader__.load({
           projects: view.projects,
           selectedIndex: currentIndex,
           onSelect: (index) => {
-            setSelected(index)
+            const picked = view.projects[index]
+            const path = picked !== undefined && picked.workspace !== undefined ? picked.workspace.path : ''
+            setSelectedPath(path)
+            if (path !== '') writeStore('projectPath', path)
+            setFields((prev) => ({
+              ...prev,
+              taskDir: String(readStore(path !== '' ? 'taskDir:' + path : 'taskDir', '') || ''),
+            }))
             load()
           },
         }),

@@ -192,6 +192,25 @@ function findSelectWithOption(node, label) {
   return findSelectWithOption(node.children, label)
 }
 
+/** 在渲染树里找一个输入框（按 placeholder）。 */
+function findInput(node, placeholder) {
+  if (node === null || node === undefined) return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findInput(child, placeholder)
+      if (found !== null) return found
+    }
+    return null
+  }
+  if (typeof node !== 'object') return null
+  if (node.type === 'input') {
+    const text = String(node.props.placeholder === undefined ? '' : node.props.placeholder)
+    return text.indexOf(placeholder) >= 0 ? node : null
+  }
+  if (typeof node.type === 'function') return findInput(node.type(node.props === undefined ? {} : node.props), placeholder)
+  return findInput(node.children, placeholder)
+}
+
 const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const PROJECT = JSON.stringify({ name: '气量平衡月表', mode: 'on' })
@@ -423,18 +442,62 @@ test('运行门禁：命令组装带 kind/taskDir，输出回显并按结果标 
   })
 
   let tree = await react.render(page, {})
+  const dirInput = findInput(tree, 'taskDir')
+  assert.ok(dirInput, '应有 taskDir 输入框')
+  dirInput.props.onChange({ target: { value: 'docs/design' } })
+  tree = await react.render(page, {})
+
   const gateBtn = findButton(tree, '运行门禁')
   assert.ok(gateBtn)
   gateBtn.props.onClick()
   tree = await react.render(page, {})
-  assert.match(collectText(tree).join(' '), /\/capability-loop run gate kind=design/)
+  assert.match(collectText(tree).join(' '), /\/capability-loop run gate kind=design taskDir=docs\/design/)
 
   findButton(tree, '确认运行').props.onClick()
   await tick()
   tree = await react.render(page, {})
   const text = collectText(tree).join(' ')
   assert.match(text, /\[门禁\] PASS/)
-  assert.equal(commandsCalls[0].line, '/capability-loop run gate kind=design')
+  assert.equal(commandsCalls[0].line, '/capability-loop run gate kind=design taskDir=docs/design')
+})
+
+test('门禁缺 taskDir：按钮禁用并提示；环境验收不需要 taskDir', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, commandsCalls } = mount(react, {
+    sessions: [session('s1', 'E:/proj-b', 1000)],
+    files,
+    commandsResult: { ok: true, value: { commandId: 'cmd-env', result: { kind: 'success', text: '[环境验收] PASS' } } },
+  })
+
+  let tree = await react.render(page, {})
+  const gateBtn = findButton(tree, '运行门禁')
+  assert.equal(gateBtn.props.disabled, true, '没有 taskDir 时不应允许运行门禁')
+  assert.match(collectText(tree).join(' '), /先填 taskDir/)
+
+  const envBtn = findButton(tree, '环境验收')
+  assert.ok(envBtn)
+  envBtn.props.onClick()
+  tree = await react.render(page, {})
+  assert.match(collectText(tree).join(' '), /\/capability-loop run env/)
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  assert.equal(commandsCalls[0].line, '/capability-loop run env')
+})
+
+test('含空格的 taskDir 用引号传，命令不被空格截断', async () => {
+  const react = createReactStub()
+  const files = { 's1|.dsh/loop/project.json': PROJECT, 's1|.dsh/loop/state.json': STATE }
+  const { page, commandsCalls } = mount(react, { sessions: [session('s1', 'E:/proj-b', 1000)], files })
+
+  let tree = await react.render(page, {})
+  findInput(tree, 'taskDir').props.onChange({ target: { value: 'docs/my design' } })
+  tree = await react.render(page, {})
+  findButton(tree, '运行门禁').props.onClick()
+  tree = await react.render(page, {})
+  findButton(tree, '确认运行').props.onClick()
+  await tick()
+  assert.equal(commandsCalls[0].line, '/capability-loop run gate kind=design taskDir="docs/my design"')
 })
 
 test('命令未被受理（value=undefined）→ 结果区提示需重启注册', async () => {

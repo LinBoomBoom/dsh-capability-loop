@@ -65,9 +65,9 @@ node --test "<skill>\plugins\capability-loop\test\takeover.test.mjs"
 
 - 入口：面板「运行中心」卡片（门禁 kind + taskDir / 交接体检 slug / 模块预检 keyword + alias / 上架打包 handle / 只读动作）与头部三段档位（接管 / 影子 / 关闭）。
 - 通道：面板 → `ctx.remote.commands.execute(sessionId, '/capability-loop …')` → Host `commands.register('capability-loop')` → `actions.js`（`dsh-doc/references/user-actions.md` 的「一个操作、两个调用方」）。
-- 安全：`ACTIONS` 白名单（audit / gate / handoff-audit / preflight / pack / visual / skill-status / sync-shadow / mode）；参数逐个校验（kind 枚举、路径 token 禁 `..`、不拼 shell）；子进程 5s grace + 动作级超时 + `AbortSignal` 取消；输出只回尾部 40 行（≤6000 字）。
+- 安全：`ACTIONS` 白名单（audit / gate / env / handoff-audit / preflight / pack / visual / skill-status / sync-shadow / mode）；参数逐个校验（kind 枚举、路径禁 `..` 与开头 `-`、中文/空格路径原样传、不拼 shell）；子进程 5s grace + 动作级超时 + `AbortSignal` 取消；输出只回尾部 40 行（≤6000 字）。
 - 确认：每个动作先弹确认框（工程 + 完整命令 + 说明），确认后才执行；运行中可取消。
-- 语法：`/capability-loop run gate kind=design taskDir=docs/design [grill=1]`、`/capability-loop run audit`、`/capability-loop mode on`。
+- 语法：`/capability-loop run gate kind=design taskDir=docs/design [grill=1]`、`/capability-loop run env`、`/capability-loop run audit`、`/capability-loop mode on`。**taskDir 必填**（没有任务目录时 loop-gate 只会报「没有可执行的门禁」，所以面板直接禁用运行键并提示）。
 - **部署注意**：Host 半的命令注册在应用启动时完成，改 `index.js`/`actions.js` 后需**重启应用**；client 半（`client.js`）刷新页面（Ctrl+R）即可。夹具 46 条（actions 17 + client 15 + takeover 13 + fallback 1）。
 
 ## 3. 档位：off / shadow / on
