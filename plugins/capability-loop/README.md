@@ -78,6 +78,8 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 - 新会话里，首条消息之后应出现治理契约（`on`）或一行影子提示（`shadow`）。
 
 > 装完必须确认 `plugin_manager action=set_plugin target=include:capability-loop enabled=true` 返回 **`application: applied`**；`install_bundle` 的 `exitCode=0` 不代表这一行活了。
+>
+> **改了 `client.js` 怎么生效（2026-11-19 实测澄清）**：桌面**正式版没有 Ctrl+R 绑定，也没有「刷新页面」菜单**（桌面壳源码里 `reloadPageMenu` / `role: "reload"` 只在开发模式出现）。可选三条路：①本地 link 安装下，DSH 的客户端插件 HMR 通常几秒内换掉模块——直接**重新点一下侧边栏「能力闭环」**；②按 **F12** 打开开发者工具，在 Console 执行 `location.reload()`；③菜单「应用」→ 退出后重新打开（Host 命令的注册也只在启动时做）。标题下会显示「面板 vX.Y.Z」，**版本没变就是没加载到新代码**。
 
 卸载：Plugins 页关闭该行，或 `plugin_manager action=remove_bundle target=dsh-capability-loop-bundle`。
 

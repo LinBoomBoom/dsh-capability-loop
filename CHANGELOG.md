@@ -2,6 +2,25 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.14.2 — 2026-11-19（面板自报版本 + 澄清桌面版的“刷新”）
+
+**起因**：用户反馈在 Harness 桌面版按 Ctrl+R 没反应，且不知道面板加载的是不是最新代码。
+
+**事实（已核桌面壳源码）**
+- 桌面正式版**没有 Ctrl+R 绑定**，也**没有「刷新页面」菜单**：`app.asar/lib/main.js` 里 `reloadPageMenu` 与 `role: "reload"` 只在 `development` 为真时加入菜单。
+- 生产版可用：F12（注册了 `toggleDevTools`）→ Console 执行 `location.reload()`；或退出应用重开；或本地 link 安装下等 HMR 后重新点侧边栏。
+
+**改动**
+- 面板标题下新增「**面板 v2.14.2**」——版本号没变就说明渲染器仍是旧 `client.js`。
+- 插件 README 增加「改了 `client.js` 怎么生效」三条路径与判断方法。
+- 新建 `memory/user-profile.md`：记录「不要用代号，要写清楚是什么」等交付偏好（同时补齐体检里一直缺的偏好记忆）。
+
+**验证**
+- `node --check` 0；client 夹具 21/21（新增版本号不影响断言）。
+- `package-skill` 通过（含 memory/ 新增文件）。
+
+**回滚**：`git revert` 本提交。
+
 ## v2.14.1 — 2026-11-19（窄窗口紧凑排版 + 桌面壳最小宽度约束）
 
 **真机截图暴露的问题**

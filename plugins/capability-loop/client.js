@@ -23,6 +23,8 @@ window.__ModuleLoader__.load({
     let pluginCtx
 
     const PANEL_ID = 'capability-loop'
+    // 面板自身版本：用来判断渲染器加载的是不是最新 client.js（桌面正式版没有 Ctrl+R，见 README）
+    const PANEL_VERSION = '2.14.2'
     const STAGE_ORDER = ['INTAKE', 'AUDIT', 'FIX', 'WIRE', 'HANDOFF', 'GRILL', 'GATE']
     const CHECK_LABEL = {
       design: '设计门',
@@ -772,6 +774,8 @@ window.__ModuleLoader__.load({
                 h('span', null, name),
                 h('span', { style: S.dotsep }, '·'),
                 h('span', null, 'skill v' + version),
+                h('span', { style: S.dotsep }, '·'),
+                h('span', null, '面板 v' + PANEL_VERSION),
                 h('span', { style: S.dotsep }, '·'),
                 h('span', null, '更新于 ' + updated),
                 h('span', { style: S.dotsep }, '·'),
