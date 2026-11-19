@@ -1,7 +1,8 @@
 ---
 name: dsh-capability-loop
-version: 2.14.3
+version: 2.15.0
 description: DSH 能力升级与治理闭环。【重点】体检/修复 DSH 自身：九组审计→检索/桌面壳/Token 死重量修复→门禁验收→经验写回；适用升级/优化/体检 DSH、治理插件与技能、修会话检索或进程退出、降 Token、迭代本 skill。【配套】项目接管（三档+状态源）、接入六问、需求/设计/测试串接、Trae 交接体检（含网关前缀）、grill 自对抗、迁移与上架。单点需求/设计/测试走各自规范。
+allowed-tools: [Read, Write, Edit, Glob, Grep, Bash]
 ---
 
 # DSH 能力升级与治理闭环（Capability Loop）
@@ -194,6 +195,7 @@ catalog 描述总字符数（源环境：磁盘 description 合计 6,419 → 3,6
 | 文件 | 解决什么 |
 |---|---|
 | `QUICKSTART.md` | 首次使用手册：3 条命令、怎么开口、出问题看哪里 |
+| `SECURITY.md` | 权限与数据边界：读/写/子进程/网络/隐私/删除策略 + 对历史扫描提示的处置 |
 | `README.md` | 商店/人读概览：能力边界、安装方式、脚本表、版本与更新、安全边界 |
 | `references/05-intake.md` | 项目接入：≤6 问、真相源、目标与验收、专家/角色编排 |
 | `references/00-baseline.md` | 环境事实基线（路径/阈值/资产/版本）+ 复核命令 |
@@ -234,7 +236,11 @@ catalog 描述总字符数（源环境：磁盘 description 合计 6,419 → 3,6
 | `templates/grill-checklist.md` | 通用 grill 记录模板（兼容旧用法） |
 | `templates/retro.md` | 任务后复盘模板（结论/证据/写回/用户反馈/待办） |
 
-## 9. 与其它 skill 的关系
+## 9. 权限与数据边界
+
+完整声明见 [`SECURITY.md`](SECURITY.md)。一句话版本：**读工程与用户指定文件；只写工作区、`.dsh/loop/`、`.tmp/`、`%TEMP%` 与 DSH 自己的技能目录；子进程只跑本地 powershell/python 脚本；运行时不需要网络；记忆只记用户明确说过的偏好且可删除；删除只针对自己创建的临时子目录。**
+
+## 10. 与其它 skill 的关系
 
 - `ui-design-production`：设计任务**必须**加载；本 skill 只负责路由、设计前置（`55`）与评审门（`50`）。
 - `feature-handoff`：交接任务**必须**加载；本 skill 只负责串起「需求/测试证据 → 设计驱动交接 → 验收」的闭环（`60`）。

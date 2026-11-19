@@ -2,6 +2,31 @@
 
 > **v2.4.0–v2.7.0 归属说明**：这几版记录的是**交接自动化**（`feature-handoff` 的 `send-to-trae-prompt.ps1` / `trae-cdp.mjs`）联调过程；**脚本本体在 `feature-handoff/scripts/`，不在本 skill**，本 skill 只同步 `references/60-handoff.md` 接线文档与版本号。合入时保留原版本编号以保持追溯（按本 skill semver，这类文档同步本应记 PATCH）。以下各条的实测证据均来自该联调会话；v2.7.0 对齐只做文档/版本整理，**未复跑窗口/GUI 操作**，未实测标注保持不变。
 
+## v2.15.0 — 2026-11-19（按 ClawHub 安全审计整改：权限声明 + 干净打包 + 删除边界）
+
+**审计来源**：<https://clawhub.ai/linboomboom/skills/dsh-capability-loop/security-audit>（审计对象是 v2.9.5，共 20 条发现；本版逐条处理，清单见 `SECURITY.md` §5）。
+
+**安全修复**
+1. `handoff-smoke.ps1` 不再清空调用方传入的 `-Scratch`：每次创建唯一子目录 `run-<时间戳>-<随机>`，读写与清理只针对该子目录（对应两条 High 的「递归删除调用方目录」）。
+2. `visual-qa-check.ps1` 不再自称只读：注释改成「会写探测 HTML/PNG 与临时 Chrome profile」；新增输出目录边界（只允许工作区或 `%TEMP%` 下，`-AllowOutsideOutDir` 显式放行）；只删除自己创建的临时 profile。
+3. `package-skill.ps1`：打包排除 `memory/`（个人偏好）、图片/压缩包/私钥、插件夹具；疑似凭证命中从 WARN 改为 **FAIL 阻断**；生成的 PUBLISH-NOTES 改为如实列出排除项与「启发式扫描 + 人工复核」，不再声称「已排除全部敏感材料」。
+4. 新增 `SECURITY.md`：读/写/子进程/网络/记忆/删除边界，以及 20 条审计发现的逐条处置与解释。
+5. `SKILL.md` frontmatter 增加 `allowed-tools`；正文新增「权限与数据边界」小节。
+6. 偏好记忆加隐私护栏：`references/85-ux-memory.md` 要求写入前告知、只记明确偏好、禁记敏感信息、给出删除流程；`memory/user-profile.md` 顶部加隐私提示。
+7. 插件卸载步骤提示先备份持久化数据；`references/95-store-publish.md` 声明运行时不联网、发布**打包目录**而不是源码仓库根；playbook 注明浏览器环境变量只对当前进程生效。
+
+**行为变更（非破坏接口）**
+- 冒烟脚本产物改为 `<Scratch>/run-<时间戳>-<随机>`；`-Keep` 保留这个子目录，不再保留/删除整个 `-Scratch`。
+- 打包产物不再包含 `docs` 图片、插件测试夹具与 `memory/`（条目数会明显下降）。
+
+**验证**
+- 夹具 **57/57**；`node --check` 0。
+- 打包：排除项生效、凭证扫描正例/反例；条目数记录在发布日志。
+- 冒烟：传入含哨兵文件的 `-Scratch`，运行后哨兵仍在、只新增/清理 run 子目录。
+- 发布：从干净包目录发布 2.15.0，附带 `--clawscan-note` 说明本地脚本/写入边界/无运行时联网。
+
+**回滚**：`git revert` 本提交；旧版仍可只读使用。
+
 ## v2.14.3 — 2026-11-19（真机截图归档：窗口宽 1296 / 768 / 最小 536 像素）
 
 **内容**（无代码变更）

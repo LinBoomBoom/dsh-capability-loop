@@ -71,7 +71,7 @@
 **ERR-20261112-11 · 沙箱里 Chrome/agent-browser 起不来**
 现象：`Chrome exited early (exit code: -36863) without writing DevToolsActivePort`；stderr：`crashpad_client_win.cc:431 OpenProcess: 拒绝访问 (0x5)`。
 根因：DSH workspace-write 进程沙箱拒绝 crashpad；`~/.agent-browser` 也不可写。
-修法：不要反复重试；走 A/B/C 路径（全权限会话 / 用户终端截图 + `read_image` / 手动截图标注未实测）；若要重定向状态目录，`AGENT_BROWSER_SOCKET_DIR/PROFILE/SCREENSHOT_DIR` 指到工作区（但 crashpad 问题仍在）。
+修法：不要反复重试；走 A/B/C 路径（全权限会话 / 用户终端截图 + `read_image` / 手动截图标注未实测）；若要重定向状态目录，`AGENT_BROWSER_SOCKET_DIR/PROFILE/SCREENSHOT_DIR` 指到工作区（但 crashpad 问题仍在）。这些环境变量**只对当前子进程有效**，不写开机启动/计划任务，也不跨会话持久化。
 
 **ERR-20261112-12 · 截图验证靠「肉眼看」没有留证**
 修法：截图落 `design-qa/<task>/`，文件名带断点/主题（`375-light.png`）；评审结论引用路径。

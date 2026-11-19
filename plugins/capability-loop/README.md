@@ -82,6 +82,7 @@ plugin_manager  action=install_bundle  target=<本目录绝对路径>
 > **改了 `client.js` 怎么生效（2026-11-19 实测澄清）**：桌面**正式版没有 Ctrl+R 绑定，也没有「刷新页面」菜单**（桌面壳源码里 `reloadPageMenu` / `role: "reload"` 只在开发模式出现）。可选三条路：①本地 link 安装下，DSH 的客户端插件 HMR 通常几秒内换掉模块——直接**重新点一下侧边栏「能力闭环」**；②按 **F12** 打开开发者工具，在 Console 执行 `location.reload()`；③菜单「应用」→ 退出后重新打开（Host 命令的注册也只在启动时做）。标题下会显示「面板 vX.Y.Z」，**版本没变就是没加载到新代码**。
 
 卸载：Plugins 页关闭该行，或 `plugin_manager action=remove_bundle target=dsh-capability-loop-bundle`。
+**卸载/移除前先备份**：卸载会移除插件注册与配置，若同时清理其存储目录，`shadow-log.jsonl` 等插件持久化数据会一并丢失；工程侧 `.dsh/loop/state.json`/`project.json` 属于工程、不会被插件删除，但请先备份再操作。
 
 ## 控制台的数据通道
 
